@@ -65,6 +65,10 @@ your first profile.
 | `2-work.cmd`  | Switch to the `work` profile, then launch Claude   |
 | `list.cmd`    | List profiles and show which one is active         |
 
+> **Update Claude Desktop from the `main` profile.** Run app updates — and other app-level
+> maintenance — while `main` is active (launch it with `1-main.cmd`). See
+> [Updating Claude Desktop](#updating-claude-desktop) below.
+
 ### From a terminal
 
 ```powershell
@@ -111,6 +115,15 @@ Account-neutral, heavy folders — `vm_bundles` (~11 GB), `claude-code`, `claude
 stored **once** in `ClaudeShared` and junctioned into each profile. New profiles reuse them
 instead of re-provisioning, which is what used to cause the "claude update error" on a fresh
 empty profile. Run `-Setup` any time to (re)link them everywhere.
+
+### Updating Claude Desktop
+
+**Perform Claude Desktop app updates (and other app-level maintenance) while the `main`
+profile is active** — launch it with `1-main.cmd`. Because the heavy, account-neutral
+infrastructure (`vm_bundles`, `claude-code`, `claude-code-vm`) is shared across all profiles
+through junctions, keeping updates on the single designated `main` profile is what keeps that
+shared infrastructure consistent and every account working correctly. After a major update you
+can re-link the shared folders into all profiles at any time with `claude-switch.ps1 -Setup`.
 
 ### Claude Code session sync (optional)
 

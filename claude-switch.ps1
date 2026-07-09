@@ -8,6 +8,7 @@
     claude-switch.ps1 -List             list profiles / show the active one
     claude-switch.ps1 <name> -NoLaunch  switch only, do not launch
     claude-switch.ps1 -Setup            (maintenance) ensure shared infra is linked everywhere
+    claude-switch.ps1 -Menu             interactive menu: add / pick a profile by number
 
   Why move-based:
     %APPDATA%\Claude is an MSIX junction -> ...\LocalCache\Roaming\Claude  (the "Live" folder).
@@ -32,7 +33,8 @@ param(
   [string]$ProfileName,
   [switch]$List,
   [switch]$NoLaunch,
-  [switch]$Setup
+  [switch]$Setup,
+  [switch]$Menu
 )
 
 $ErrorActionPreference = 'Stop'
@@ -166,6 +168,42 @@ function Sync-PushCC([string]$name) {
     }
   }
 }
+function Save-CCSyncMap {
+  New-Item -ItemType Directory -Force -Path $P.Shared | Out-Null
+  $ordered = [ordered]@{}
+  foreach ($k in ($CCSyncMap.Keys | Sort-Object)) { $ordered[$k] = $CCSyncMap[$k] }
+  ($ordered | ConvertTo-Json -Depth 5) | Set-Content -Path $P.CCMap -Encoding UTF8
+}
+# Self-heal the sync map: whichever account/org UUID pair is actually sitting in Live's
+# claude-code-sessions right now (freshest local_*.json wins) becomes the map entry for
+# profile <name>. Runs before every pull (departing profile) and after every activation
+# (arriving profile), so logging into a different account under a profile - or creating
+# one outside the map - fixes itself on the very next switch instead of silently going stale.
+function Update-CCMapEntry([string]$name) {
+  $sessDir = Join-Path $P.Live 'claude-code-sessions'
+  if (-not (Test-Path $sessDir)) { return }
+  $candidates = foreach ($acct in (Get-ChildItem $sessDir -Directory -ErrorAction SilentlyContinue)) {
+    foreach ($org in (Get-ChildItem $acct.FullName -Directory -ErrorAction SilentlyContinue)) {
+      $latest = Get-ChildItem $org.FullName -Filter 'local_*.json' -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+      [pscustomobject]@{
+        AccountUuid = $acct.Name
+        OrgUuid     = $org.Name
+        LastWrite   = if ($latest) { $latest.LastWriteTimeUtc } else { $org.LastWriteTimeUtc }
+      }
+    }
+  }
+  if (-not $candidates) { return }
+  $sorted = @($candidates) | Sort-Object LastWrite -Descending
+  $best = $sorted[0]
+  $current = $CCSyncMap[$name]
+  if ($current -and $current.accountUuid -eq $best.AccountUuid -and $current.orgUuid -eq $best.OrgUuid) { return }
+  $email = if ($current -and $current.email) { $current.email } else { '' }
+  $CCSyncMap[$name] = [pscustomobject]@{ accountUuid = $best.AccountUuid; orgUuid = $best.OrgUuid; email = $email }
+  Save-CCSyncMap
+  $note = if (@($sorted).Count -gt 1) { " ($(@($sorted).Count) accounts seen under this profile, picked most recently active)" } else { '' }
+  Write-Host "[cc-sync] '$name' account changed -> map updated to $($best.AccountUuid)$note" -ForegroundColor Cyan
+}
 
 $P = Resolve-ClaudePaths
 New-Item -ItemType Directory -Force -Path $P.Store, $P.Shared | Out-Null
@@ -211,6 +249,49 @@ if ($Setup) {
   return
 }
 
+# --- Interactive menu: pick a profile by number, or add a new one, without a per-profile .cmd ---
+if ($Menu) {
+  while ($true) {
+    $active = Get-Active
+    $names = New-Object System.Collections.Generic.List[string]
+    if ($active) { $names.Add($active) }
+    Get-ChildItem $P.Store -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+      if ($_.Name -ne $active) { $names.Add($_.Name) }
+    }
+    $names = @($names | Sort-Object -Unique)
+
+    Write-Host "`n=== claude-switch ===" -ForegroundColor Cyan
+    Write-Host "Active: " -NoNewline
+    Write-Host ($(if ($active) { $active } else { '(none)' })) -ForegroundColor Green
+    Write-Host ""
+    for ($i = 0; $i -lt $names.Count; $i++) {
+      $mark = if ($names[$i] -eq $active) { '  [active]' } else { '' }
+      Write-Host ("  {0}) {1}{2}" -f ($i + 1), $names[$i], $mark)
+    }
+    Write-Host "  N) Add new profile"
+    Write-Host "  Q) Quit"
+    $choice = Read-Host "`nSelect"
+
+    if ($choice -match '^[Qq]$' -or [string]::IsNullOrWhiteSpace($choice)) { return }
+
+    if ($choice -match '^[Nn]$') {
+      $newName = Read-Host "New profile name"
+      try { Assert-ValidProfileName $newName }
+      catch { Write-Host $_.Exception.Message -ForegroundColor Red; continue }
+      if ($names -contains $newName) { Write-Host "Profile '$newName' already exists - pick it from the list instead." -ForegroundColor Red; continue }
+      $target = $newName
+    } elseif ($choice -match '^\d+$' -and [int]$choice -ge 1 -and [int]$choice -le $names.Count) {
+      $target = $names[[int]$choice - 1]
+    } else {
+      Write-Host "Invalid choice." -ForegroundColor Red
+      continue
+    }
+
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath $target
+    return
+  }
+}
+
 # --- List ---
 if ($List -or -not $ProfileName) {
   $active = Get-Active
@@ -238,7 +319,7 @@ try {
   $active = Get-Active
   # Capture the outgoing/active account's CC sessions into the shared canonical store
   # (Live still holds the active profile here). Never let a sync error block switching.
-  try { if ($active) { Sync-PullCC $active } } catch { Write-Host "[cc-sync] pull skipped: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+  try { if ($active) { Update-CCMapEntry $active; Sync-PullCC $active } } catch { Write-Host "[cc-sync] pull skipped: $($_.Exception.Message)" -ForegroundColor DarkYellow }
   if ($active -ne $ProfileName) {
     # Stash the currently active profile (sitting at Live) back into the store.
     $stashed = $null
@@ -270,6 +351,7 @@ try {
     }
   }
   # Give the now-active account the full union of CC sessions (Live now holds the target).
+  try { Update-CCMapEntry $ProfileName } catch { Write-Host "[cc-sync] detect skipped: $($_.Exception.Message)" -ForegroundColor DarkYellow }
   try { Sync-PushCC $ProfileName } catch { Write-Host "[cc-sync] push skipped: $($_.Exception.Message)" -ForegroundColor DarkYellow }
   Ensure-SharedLinks $P.Live
   Write-Host "Active profile -> '$ProfileName'" -ForegroundColor Green

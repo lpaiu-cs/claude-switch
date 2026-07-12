@@ -9,6 +9,8 @@
     claude-switch.ps1 <name> -NoLaunch  switch only, do not launch
     claude-switch.ps1 -Setup            (maintenance) ensure shared infra is linked everywhere
     claude-switch.ps1 -Menu             interactive menu: add / pick a profile by number
+    claude-switch.ps1 -Stop             fully close Claude Desktop + all its children (run this
+                                        before updating the app, or it may fail with a file lock)
 
   Why move-based:
     %APPDATA%\Claude is an MSIX junction -> ...\LocalCache\Roaming\Claude  (the "Live" folder).
@@ -34,7 +36,8 @@ param(
   [switch]$List,
   [switch]$NoLaunch,
   [switch]$Setup,
-  [switch]$Menu
+  [switch]$Menu,
+  [switch]$Stop
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,18 +62,61 @@ function Resolve-ClaudePaths {
   }
 }
 
+# Every process that belongs to Claude Desktop: the MSIX package processes (their image lives
+# under WindowsApps\...\Claude...) PLUS every process they spawned. The children - Claude Code
+# CLI, Node utility services, the sandbox VM - run their executables from the junctioned
+# Roaming\Claude subfolders, so a path-only match misses them. Those survivors keep the MSIX
+# package "in use" after the window closes, which is exactly what blocks an app update ("Another
+# program is currently using this file", cleared only by a reboot); one of them (the CC CLI) also
+# holds its image handle *inside* Live through the junction, which can break a folder move
+# mid-switch. So we walk the whole descendant tree from the package roots and take it all down.
+# Our own process ($PID) is never returned, so running this from a shell Claude Desktop spawned
+# can't make the script kill itself.
+function Get-ClaudeDesktopProcesses {
+  $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+  if (-not $all) { return @() }
+  $byId = @{}; $children = @{}
+  foreach ($p in $all) {
+    $id = [int]$p.ProcessId; $pp = [int]$p.ParentProcessId
+    $byId[$id] = $p
+    if (-not $children.ContainsKey($pp)) { $children[$pp] = New-Object 'System.Collections.Generic.List[int]' }
+    $children[$pp].Add($id)
+  }
+  $seen  = New-Object 'System.Collections.Generic.HashSet[int]'
+  $queue = New-Object 'System.Collections.Generic.Queue[int]'
+  foreach ($p in $all) {
+    if ($p.ExecutablePath -like '*WindowsApps*Claude*') {
+      $id = [int]$p.ProcessId
+      if ($seen.Add($id)) { [void]$queue.Enqueue($id) }
+    }
+  }
+  $out = New-Object 'System.Collections.Generic.List[object]'
+  while ($queue.Count -gt 0) {
+    $id = $queue.Dequeue()
+    if ($id -ne $PID) { $out.Add($byId[$id]) }   # never take down the shell running this script
+    if ($children.ContainsKey($id)) {
+      foreach ($c in $children[$id]) { if ($seen.Add($c)) { [void]$queue.Enqueue($c) } }
+    }
+  }
+  return $out.ToArray()   # ToArray, not @($out): @() on a List[object] throws in PS 5.1
+}
+
 function Stop-ClaudeDesktop {
-  $isClaude = { $_.Path -and $_.Path -like '*WindowsApps*Claude*' }
-  Get-Process -Name 'Claude' -ErrorAction SilentlyContinue |
-    Where-Object $isClaude |
-    Stop-Process -Force -ErrorAction SilentlyContinue
+  # Kill leaves before roots so a dying parent can't respawn/re-parent a child we already passed.
+  $procs = @(Get-ClaudeDesktopProcesses)
+  [array]::Reverse($procs)
+  foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
   for ($i = 0; $i -lt 30; $i++) {
-    if (-not (Get-Process -Name 'Claude' -ErrorAction SilentlyContinue | Where-Object $isClaude)) { return }
+    $rem = @(Get-ClaudeDesktopProcesses)
+    if (-not $rem.Count) { return }
+    $rem | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 200
   }
   # Still alive after ~6s: refuse to proceed rather than fail later with a cryptic file-lock error.
-  if (Get-Process -Name 'Claude' -ErrorAction SilentlyContinue | Where-Object $isClaude) {
-    throw "Claude Desktop is still running and could not be closed. Close it manually, then retry."
+  $rem = @(Get-ClaudeDesktopProcesses)
+  if ($rem.Count) {
+    $list = ($rem | ForEach-Object { "$($_.Name) (PID $($_.ProcessId))" }) -join ', '
+    throw "Claude Desktop is still running and could not be closed: $list. Close it manually, then retry."
   }
 }
 
@@ -207,6 +253,20 @@ function Update-CCMapEntry([string]$name) {
 
 $P = Resolve-ClaudePaths
 New-Item -ItemType Directory -Force -Path $P.Store, $P.Shared | Out-Null
+
+# --- Stop: fully close Claude Desktop and everything it spawned (Claude Code CLI, Node services,
+# sandbox VM). Run this before updating Claude Desktop: those children inherit the MSIX package
+# identity and, if left alive, lock the package so the update fails with "Another program is
+# currently using this file" (needing a reboot). Kept side-effect-free (no folder moves). ---
+if ($Stop) {
+  $lock = Acquire-Lock
+  try {
+    Stop-ClaudeDesktop
+    Write-Host "Claude Desktop and all its background processes are stopped." -ForegroundColor Green
+    Write-Host "You can now update Claude Desktop safely." -ForegroundColor Green
+  } finally { Release-Lock $lock }
+  return
+}
 
 # Load the CC sync map (profile name -> account/org uuids). Missing/invalid = sync disabled.
 $CCSyncMap = @{}

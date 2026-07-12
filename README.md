@@ -67,9 +67,11 @@ your first profile.
 | `2-work.cmd`  | Switch to the `work` profile, then launch Claude   |
 | `list.cmd`    | List profiles and show which one is active         |
 | `menu.cmd`    | Interactive menu: pick a profile by number, or add a new one — no need to make a `.cmd` per profile |
+| `stop.cmd`    | Fully close Claude Desktop and everything it spawned — **run this before updating the app** |
 
-> **Update Claude Desktop from the `main` profile.** Run app updates — and other app-level
-> maintenance — while `main` is active (launch it with `1-main.cmd`). See
+> **Update Claude Desktop from the `main` profile, and run `stop.cmd` first.** Run app
+> updates — and other app-level maintenance — while `main` is active (launch it with
+> `1-main.cmd`), and fully close the app with `stop.cmd` before you update. See
 > [Updating Claude Desktop](#updating-claude-desktop) below.
 
 ### From a terminal
@@ -80,6 +82,7 @@ your first profile.
 .\claude-switch.ps1 <name> -NoLaunch  # switch only, don't launch
 .\claude-switch.ps1 -Setup            # (maintenance) link shared infra into every profile
 .\claude-switch.ps1 -Menu             # interactive menu: pick a profile by number, or add one
+.\claude-switch.ps1 -Stop             # fully close Claude Desktop + all its children (do this before updating)
 ```
 
 - Switching to an **unknown name** creates a new empty profile — just log in with the other
@@ -123,12 +126,34 @@ empty profile. Run `-Setup` any time to (re)link them everywhere.
 
 ### Updating Claude Desktop
 
-**Perform Claude Desktop app updates (and other app-level maintenance) while the `main`
-profile is active** — launch it with `1-main.cmd`. Because the heavy, account-neutral
-infrastructure (`vm_bundles`, `claude-code`, `claude-code-vm`) is shared across all profiles
-through junctions, keeping updates on the single designated `main` profile is what keeps that
-shared infrastructure consistent and every account working correctly. After a major update you
-can re-link the shared folders into all profiles at any time with `claude-switch.ps1 -Setup`.
+**Before updating, fully close the app with `stop.cmd`** (or `claude-switch.ps1 -Stop`), and
+**perform the update while the `main` profile is active** — launch it with `1-main.cmd`.
+
+Why `stop.cmd` matters: Claude Desktop is an MSIX (Store) package, and clicking the window's X
+doesn't necessarily end everything it started. It spawns **child processes that inherit the
+package identity** — the Claude Code CLI, Node utility services, and the sandbox VM — and some of
+these run their executables from the junctioned `claude-code` / `vm_bundles` folders and survive a
+plain window-close. While any of them is still alive, Windows considers the package **in use**, so
+an update can't replace the installed files and fails with:
+
+```
+C:\Program Files\WindowsApps\Claude_<version>_x64__...
+Another program is currently using this file.
+```
+
+The half-applied update then only finalizes after a **reboot** (which is what finally kills the
+leftover children). `stop.cmd` avoids all of this by terminating the **entire Claude Desktop
+process tree** — the main app plus every child it spawned — so no file is locked when the update
+runs. (This is also why a normal profile switch now takes down the whole tree: a leftover child
+holding a handle inside the live folder could otherwise break the folder move.)
+
+Keeping updates on the single designated `main` profile also keeps the heavy, account-neutral
+infrastructure (`vm_bundles`, `claude-code`, `claude-code-vm`, shared across all profiles through
+junctions) consistent and every account working correctly. After a major update you can re-link
+the shared folders into all profiles at any time with `claude-switch.ps1 -Setup`.
+
+**Recommended update flow:** `1-main.cmd` → do your work → `stop.cmd` → update Claude Desktop →
+relaunch with `1-main.cmd`.
 
 ### Claude Code session sync (automatic)
 
@@ -255,9 +280,11 @@ Claude Desktop(Store 버전)은 계정 데이터를 전부 하나의 폴더에 �
 | `2-work.cmd`  | `work` 프로필로 전환 후 Claude 실행        |
 | `list.cmd`    | 프로필 목록과 현재 활성 프로필 표시        |
 | `menu.cmd`    | 번호로 프로필을 고르거나 새로 추가하는 대화형 메뉴 — 프로필마다 `.cmd`를 만들 필요 없음 |
+| `stop.cmd`    | Claude Desktop과 그것이 띄운 모든 프로세스를 완전히 종료 — **앱 업데이트 전에 실행** |
 
-> **Claude Desktop 업데이트는 `main` 프로필에서 하세요.** 앱 업데이트 및 기타 앱 수준
-> 유지보수는 `main`이 활성인 상태(`1-main.cmd`로 실행)에서 수행하세요. 아래
+> **Claude Desktop 업데이트는 `main` 프로필에서, 먼저 `stop.cmd`로 앱을 완전히 종료한 뒤에
+> 하세요.** 앱 업데이트 및 기타 앱 수준 유지보수는 `main`이 활성인 상태(`1-main.cmd`로 실행)에서
+> 수행하고, 업데이트 직전에 `stop.cmd`로 앱을 완전히 닫으세요. 아래
 > [Claude Desktop 업데이트하기](#claude-desktop-업데이트하기) 참고.
 
 #### 터미널에서
@@ -268,6 +295,7 @@ Claude Desktop(Store 버전)은 계정 데이터를 전부 하나의 폴더에 �
 .\claude-switch.ps1 <이름> -NoLaunch  # 전환만 하고 실행하지 않음
 .\claude-switch.ps1 -Setup            # (유지보수) 공유 인프라를 모든 프로필에 연결
 .\claude-switch.ps1 -Menu             # 대화형 메뉴: 번호로 프로필 선택 또는 새로 추가
+.\claude-switch.ps1 -Stop             # Claude Desktop과 모든 자식 프로세스를 완전히 종료 (업데이트 전에 실행)
 ```
 
 - **없는 이름**으로 전환하면 빈 프로필이 새로 만들어집니다 — Claude 실행 후 다른 계정으로
@@ -308,12 +336,34 @@ Claude Desktop(Store 버전)은 계정 데이터를 전부 하나의 폴더에 �
 
 #### Claude Desktop 업데이트하기
 
-**Claude Desktop 앱 업데이트(및 기타 앱 수준 유지보수)는 `main` 프로필이 활성인 상태에서
-수행하세요** — `1-main.cmd`로 실행합니다. 계정과 무관한 무거운 인프라(`vm_bundles`,
-`claude-code`, `claude-code-vm`)가 정션으로 모든 프로필에 공유되기 때문에, 지정된 단일
-프로필(`main`)에서 업데이트를 유지해야 그 공유 인프라가 일관되게 유지되고 모든 계정이 올바르게
-동작합니다. 대규모 업데이트 후에는 언제든 `claude-switch.ps1 -Setup`으로 공유 폴더를 모든
-프로필에 다시 연결할 수 있습니다.
+**업데이트 전에 `stop.cmd`(또는 `claude-switch.ps1 -Stop`)로 앱을 완전히 종료하고**,
+**업데이트는 `main` 프로필이 활성인 상태에서 수행하세요** — `1-main.cmd`로 실행합니다.
+
+`stop.cmd`가 필요한 이유: Claude Desktop은 MSIX(Store) 패키지인데, 창의 X 버튼을 눌러도 앱이
+띄운 것들이 전부 종료되지는 않습니다. Claude Desktop은 **패키지 정체성(package identity)을
+물려받은 자식 프로세스** — Claude Code CLI, Node 유틸리티 서비스, 샌드박스 VM — 를 띄우며, 그중
+일부는 정션된 `claude-code` / `vm_bundles` 폴더에서 실행 파일을 로드하고 창을 닫아도 살아남습니다.
+이들이 하나라도 살아 있으면 Windows는 패키지를 **사용 중**으로 판단해, 업데이트가 설치 파일을
+교체하지 못하고 다음과 같이 실패합니다:
+
+```
+C:\Program Files\WindowsApps\Claude_<버전>_x64__...
+Another program is currently using this file.
+```
+
+이렇게 반쯤 적용된 업데이트는 **재부팅**해야(남아 있던 자식 프로세스가 그제서야 종료되면서)
+마무리됩니다. `stop.cmd`는 **Claude Desktop 프로세스 트리 전체** — 메인 앱과 그것이 띄운 모든
+자식 — 를 종료해서 이 문제를 원천 차단하므로, 업데이트가 돌 때 잠긴 파일이 없습니다. (일반 프로필
+전환도 이제 트리 전체를 종료합니다. 살아남은 자식이 활성 폴더 안에 핸들을 걸고 있으면 폴더 이동이
+깨질 수 있기 때문입니다.)
+
+지정된 단일 프로필(`main`)에서 업데이트를 유지하면 계정과 무관한 무거운 인프라(`vm_bundles`,
+`claude-code`, `claude-code-vm` — 정션으로 모든 프로필에 공유됨)도 일관되게 유지되고 모든 계정이
+올바르게 동작합니다. 대규모 업데이트 후에는 언제든 `claude-switch.ps1 -Setup`으로 공유 폴더를
+모든 프로필에 다시 연결할 수 있습니다.
+
+**권장 업데이트 순서:** `1-main.cmd` → 작업 → `stop.cmd` → Claude Desktop 업데이트 →
+`1-main.cmd`로 다시 실행.
 
 #### Claude Code 세션 동기화 (자동)
 

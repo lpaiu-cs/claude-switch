@@ -9,6 +9,8 @@
     claude-switch.ps1 <name> -NoLaunch  switch only, do not launch
     claude-switch.ps1 -Setup            (maintenance) ensure shared infra is linked everywhere
     claude-switch.ps1 -Menu             interactive menu: add / pick a profile by number
+    claude-switch.ps1 -Stop             fully close Claude Desktop + all its children (run this
+                                        before updating the app, or it may fail with a file lock)
 
   Why move-based:
     %APPDATA%\Claude is an MSIX junction -> ...\LocalCache\Roaming\Claude  (the "Live" folder).
@@ -34,7 +36,8 @@ param(
   [switch]$List,
   [switch]$NoLaunch,
   [switch]$Setup,
-  [switch]$Menu
+  [switch]$Menu,
+  [switch]$Stop
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,18 +62,77 @@ function Resolve-ClaudePaths {
   }
 }
 
+# Every process that belongs to Claude Desktop: the MSIX package processes (their image lives
+# under WindowsApps\...\Claude...) PLUS every process they spawned. The children - Claude Code CLI,
+# Node utility services, the sandbox VM - run from the junctioned Roaming\Claude subfolders, so a
+# WindowsApps-only match misses them. The package processes keep the MSIX package "in use" after
+# the window closes, which is what blocks an app update ("Another program is currently using this
+# file", cleared only by a reboot); the junctioned children hold handles inside Live that can
+# break a folder move mid-switch. We take the whole set down.
+#
+# Roots are chosen PER PROCESS (by its own image path), never from a single "main" PID, so this is
+# robust to the main window exiting first: a lingering renderer/crashpad still matches the
+# WindowsApps path on its own, and a Claude Code CLI / VM child that outlived its parent still
+# matches its junctioned Claude subfolder on its own. That way detection never comes back empty
+# while a package process is still alive - which would otherwise make Stop-ClaudeDesktop report a
+# false success. Descendants of every root are then swept via the parent map (catching Node/ripgrep
+# helpers of any name). Our own process ($PID) is never returned, so running this from a shell that
+# Claude Desktop spawned can't make the script kill itself.
+function Get-ClaudeDesktopProcesses {
+  $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+  if (-not $all) { return @() }
+  $byId = @{}; $children = @{}
+  foreach ($p in $all) {
+    $id = [int]$p.ProcessId; $pp = [int]$p.ParentProcessId
+    $byId[$id] = $p
+    if (-not $children.ContainsKey($pp)) { $children[$pp] = New-Object 'System.Collections.Generic.List[int]' }
+    $children[$pp].Add($id)
+  }
+  # A process is a Claude Desktop root if it is the packaged binary (WindowsApps\...\Claude...) or
+  # runs from one of the junctioned Claude subfolders (claude-code, claude-code-vm, vm_bundles),
+  # which live under Live via a junction - i.e. a Claude Code CLI or sandbox VM child.
+  $junctionPats = @($SharedFolders | ForEach-Object { "*\Claude\$_\*" })
+  $seen  = New-Object 'System.Collections.Generic.HashSet[int]'
+  $queue = New-Object 'System.Collections.Generic.Queue[int]'
+  foreach ($p in $all) {
+    $id = [int]$p.ProcessId
+    if ($id -eq $PID) { continue }
+    $path = [string]$p.ExecutablePath
+    if (-not $path) { continue }
+    $isRoot = $path -like '*WindowsApps*Claude*'
+    if (-not $isRoot) { foreach ($pat in $junctionPats) { if ($path -like $pat) { $isRoot = $true; break } } }
+    if ($isRoot -and $seen.Add($id)) { [void]$queue.Enqueue($id) }
+  }
+  $out = New-Object 'System.Collections.Generic.List[object]'
+  while ($queue.Count -gt 0) {
+    $id = $queue.Dequeue()
+    if ($id -ne $PID) { $out.Add($byId[$id]) }   # never take down the shell running this script
+    if ($children.ContainsKey($id)) {
+      foreach ($c in $children[$id]) { if ($seen.Add($c)) { [void]$queue.Enqueue($c) } }
+    }
+  }
+  return $out.ToArray()   # ToArray, not @($out): @() on a List[object] throws in PS 5.1
+}
+
 function Stop-ClaudeDesktop {
-  $isClaude = { $_.Path -and $_.Path -like '*WindowsApps*Claude*' }
-  Get-Process -Name 'Claude' -ErrorAction SilentlyContinue |
-    Where-Object $isClaude |
-    Stop-Process -Force -ErrorAction SilentlyContinue
+  # Success is verified against concrete PIDs, not against whether detection can still see them.
+  # We remember every process we ever spot (initial pass + each retry) and only return once every
+  # one of those PIDs is actually gone. Re-detecting alone isn't enough: once a parent exits, a
+  # surviving child could drop out of a fresh scan and make us wrongly report "all closed" while it
+  # still holds the update/profile lock. $tracked keeps the PID (and a label) so it can't slip out.
+  $tracked = @{}
   for ($i = 0; $i -lt 30; $i++) {
-    if (-not (Get-Process -Name 'Claude' -ErrorAction SilentlyContinue | Where-Object $isClaude)) { return }
+    foreach ($p in @(Get-ClaudeDesktopProcesses)) { $tracked[[int]$p.ProcessId] = $p.Name }
+    $alive = @($tracked.Keys | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
+    if (-not $alive.Count) { return }
+    foreach ($procId in $alive) { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 200
   }
   # Still alive after ~6s: refuse to proceed rather than fail later with a cryptic file-lock error.
-  if (Get-Process -Name 'Claude' -ErrorAction SilentlyContinue | Where-Object $isClaude) {
-    throw "Claude Desktop is still running and could not be closed. Close it manually, then retry."
+  $alive = @($tracked.Keys | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
+  if ($alive.Count) {
+    $list = ($alive | ForEach-Object { "$($tracked[$_]) (PID $_)" }) -join ', '
+    throw "Claude Desktop is still running and could not be closed: $list. Close it manually, then retry."
   }
 }
 
@@ -207,6 +269,20 @@ function Update-CCMapEntry([string]$name) {
 
 $P = Resolve-ClaudePaths
 New-Item -ItemType Directory -Force -Path $P.Store, $P.Shared | Out-Null
+
+# --- Stop: fully close Claude Desktop and everything it spawned (Claude Code CLI, Node services,
+# sandbox VM). Run this before updating Claude Desktop: those children inherit the MSIX package
+# identity and, if left alive, lock the package so the update fails with "Another program is
+# currently using this file" (needing a reboot). Kept side-effect-free (no folder moves). ---
+if ($Stop) {
+  $lock = Acquire-Lock
+  try {
+    Stop-ClaudeDesktop
+    Write-Host "Claude Desktop and all its background processes are stopped." -ForegroundColor Green
+    Write-Host "You can now update Claude Desktop safely." -ForegroundColor Green
+  } finally { Release-Lock $lock }
+  return
+}
 
 # Load the CC sync map (profile name -> account/org uuids). Missing/invalid = sync disabled.
 $CCSyncMap = @{}

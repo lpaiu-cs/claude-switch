@@ -278,6 +278,15 @@ Active marker   ~/Library/Application Support/ClaudeActiveProfile.txt
   `stop.command` → update → relaunch with `1-main.command`.
 - **Claude Code session sync** works exactly as described above; the map lives at
   `~/Library/Application Support/ClaudeShared/cc-sync-map.json`.
+- **Session *content* is synced too.** On macOS the desktop keeps each session's actual data —
+  `outputs/`, `uploads/`, the audit log, the per-session config — account-keyed under
+  `local-agent-mode-sessions/<accountUuid>/<orgUuid>/local_<id>/`. Syncing only the index (as on
+  Windows) would make a switched-to account list the session but open it empty. So each switch
+  also unions the session content through `ClaudeShared/lam-sessions-canonical` (per-file
+  newest-wins via `rsync`), and rewrites the absolute account-scoped paths embedded in the
+  session JSONs to the incoming account's UUIDs so the sessions actually open. Caches
+  (`rpm/`, `cowork-*-cache.json`) are skipped — the app regenerates them. Note this store grows
+  with your sessions' outputs/uploads; prune old sessions in the app if it gets large.
 
 ---
 
@@ -575,6 +584,15 @@ Windows와 마찬가지로 처음 실행하면 현재 설치본이 자동으로 
   `1-main.command`로 다시 실행.
 - **Claude Code 세션 동기화**는 위 설명 그대로 동작하며, 매핑 파일은
   `~/Library/Application Support/ClaudeShared/cc-sync-map.json`에 있습니다.
+- **세션 *내용*도 함께 동기화됩니다.** macOS에서는 데스크톱이 각 세션의 실제 데이터 —
+  `outputs/`, `uploads/`, 감사 로그, 세션별 설정 — 를
+  `local-agent-mode-sessions/<accountUuid>/<orgUuid>/local_<id>/` 아래에 계정 단위로 보관합니다.
+  (Windows처럼) 인덱스만 동기화하면 전환한 계정에서 세션이 목록에는 보여도 열면 비어 있게
+  됩니다. 그래서 전환할 때마다 세션 내용도 `ClaudeShared/lam-sessions-canonical`을 거쳐
+  union으로 동기화하고(`rsync` 파일별 최신 우선), 세션 JSON에 박혀 있는 계정 UUID 절대경로를
+  들어오는 계정의 UUID로 재작성해 세션이 실제로 열리게 합니다. 캐시(`rpm/`,
+  `cowork-*-cache.json`)는 앱이 재생성하므로 건너뜁니다. 이 저장소는 세션의 outputs/uploads만큼
+  커지니, 많이 쌓이면 앱에서 오래된 세션을 정리하세요.
 
 ### 안전성 & 견고함
 

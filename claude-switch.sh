@@ -44,6 +44,7 @@ typeset -g STORE="$SUPPORT/ClaudeProfiles"
 typeset -g SHARED="$SUPPORT/ClaudeShared"
 typeset -g MARKER="$SUPPORT/ClaudeActiveProfile.txt"
 typeset -g CC_CANON="$SHARED/cc-sessions-canonical"
+typeset -g LAM_CANON="$SHARED/lam-sessions-canonical"
 typeset -g CC_MAP="$SHARED/cc-sync-map.json"
 typeset -g LOCKDIR="$SHARED/claude-switch.lock"
 typeset -g LOCK_HELD=0
@@ -303,7 +304,73 @@ _sync_dir() {
 }
 
 sync_pull_cc() { local v; v=$(cc_view_dir "$1") || return 0; _sync_dir "$v" "$CC_CANON"; }
-sync_push_cc() { local v; v=$(cc_view_dir "$1") || return 0; [[ -d $CC_CANON ]] || return 0; _sync_dir "$CC_CANON" "$v"; }
+sync_push_cc() {
+  local v; v=$(cc_view_dir "$1") || return 0
+  [[ -d $CC_CANON ]] || return 0
+  _sync_dir "$CC_CANON" "$v"
+  _rewrite_session_paths "$v" "${CC_ACCT[$1]-}" "${CC_ORG[$1]-}"
+}
+
+# --- Session CONTENT sync (local-agent-mode-sessions) -------------------------
+# The index above only lists sessions; their actual content - outputs, uploads, audit log, the
+# per-session config - lives account-keyed under
+#   local-agent-mode-sessions/<accountUuid>/<orgUuid>/local_<id>{,/}
+# Without syncing this, a switched-to account sees the session in its list but opens it empty
+# ("project contents missing"). We union it through a canonical store like the index: session ids
+# are uuids, so entries from different accounts never collide. Directories merge per-file
+# newest-wins via rsync; the per-session local_*.json files use the same newest-wins copy as the
+# index. Caches (rpm/, cowork-*-cache.json) are account-local and skipped - the app regenerates
+# them.
+typeset -g HAVE_RSYNC=0
+command -v rsync >/dev/null 2>&1 && HAVE_RSYNC=1
+
+lam_view_dir() {
+  local name=$1
+  local acct=${CC_ACCT[$name]-} org=${CC_ORG[$name]-}
+  [[ -n $acct && -n $org ]] || return 1
+  print -r -- "$LIVE/local-agent-mode-sessions/$acct/$org"
+}
+
+_sync_lam() {
+  local src=$1 dst=$2 e base
+  [[ -d $src ]] || return 0
+  mkdir -p -- "$dst"
+  for e in "$src"/local_*(N/); do   # session content dirs
+    base=${e:t}
+    if (( HAVE_RSYNC )); then
+      rsync -a -u -- "$e/" "$dst/$base/"
+    else
+      [[ -e "$dst/$base" ]] || cp -Rp -- "$e" "$dst/$base"
+    fi
+  done
+  _sync_dir "$src" "$dst"           # per-session local_*.json files (newest wins)
+  return 0
+}
+
+# Session jsons embed ABSOLUTE paths that include the owning account's uuids
+# (".../local-agent-mode-sessions/<acct>/<org>/local_<id>/outputs"). After copying a session to a
+# different account's view, those paths still point at the OLD account and the session opens
+# broken. Rewrite every <uuid>/<uuid> pair under local-agent-mode-sessions/ to the target
+# account's pair. Runs on push only (canonical keeps whatever it captured; every push re-targets).
+_rewrite_session_paths() {
+  local dir=$1 acct=$2 org=$3 f
+  [[ -n $acct && -n $org && -d $dir ]] || return 0
+  local u8='[0-9a-fA-F]{8}' u4='[0-9a-fA-F]{4}' u12='[0-9a-fA-F]{12}'
+  local uuid="$u8(-$u4){3}-$u12"
+  for f in "$dir"/local_*.json(N); do
+    LC_ALL=C sed -E -i '' \
+      "s|local-agent-mode-sessions/$uuid/$uuid|local-agent-mode-sessions/$acct/$org|g" "$f"
+  done
+  return 0
+}
+
+sync_pull_lam() { local v; v=$(lam_view_dir "$1") || return 0; _sync_lam "$v" "$LAM_CANON"; }
+sync_push_lam() {
+  local v; v=$(lam_view_dir "$1") || return 0
+  [[ -d $LAM_CANON ]] || return 0
+  _sync_lam "$LAM_CANON" "$v"
+  _rewrite_session_paths "$v" "${CC_ACCT[$1]-}" "${CC_ORG[$1]-}"
+}
 
 # Self-heal the map: whichever account/org pair actually has the freshest session file in Live
 # becomes the map entry for profile <name>. Runs before pull (departing) and after activation
@@ -456,6 +523,7 @@ cmd_switch() {
   if [[ -n $active ]]; then
     update_cc_map_entry "$active" 2>/dev/null || print -u2 -- "[cc-sync] detect skipped"
     sync_pull_cc "$active" 2>/dev/null || print -u2 -- "[cc-sync] pull skipped"
+    sync_pull_lam "$active" 2>/dev/null || print -u2 -- "[cc-sync] content pull skipped"
   fi
 
   if [[ $active != "$name" ]]; then
@@ -494,6 +562,7 @@ cmd_switch() {
   # Give the now-active account the full union of CC sessions (Live now holds the target).
   update_cc_map_entry "$name" 2>/dev/null || print -u2 -- "[cc-sync] detect skipped"
   sync_push_cc "$name" 2>/dev/null || print -u2 -- "[cc-sync] push skipped"
+  sync_push_lam "$name" 2>/dev/null || print -u2 -- "[cc-sync] content push skipped"
   ensure_shared_links "$LIVE"
   release_lock
   info "Active profile -> '$name'"

@@ -2,9 +2,12 @@
 
 **English** | [한국어](#한국어)
 
-Switch between multiple **Claude Desktop** (Microsoft Store / MSIX) account profiles on
-Windows — one account active at a time, no re-download of the multi-gigabyte VM bundle,
-and your logins preserved across switches.
+Switch between multiple **Claude Desktop** account profiles — one account active at a time,
+no re-download of the multi-gigabyte VM bundle, and your logins preserved across switches.
+
+Works on both **Windows** (Microsoft Store / MSIX build, via `claude-switch.ps1`) and
+**macOS** (via `claude-switch.sh`). The two ports share the same move-based design; see
+[macOS](#macos) for the Mac-specific instructions and how it differs from Windows.
 
 > Unofficial community tool. Not affiliated with or endorsed by Anthropic. It manipulates
 > Claude Desktop's local data folders, which are undocumented and can change between app
@@ -35,11 +38,13 @@ instant renames, so switching is fast and safe.
 
 ---
 
-## Requirements
+## Requirements (Windows)
 
 - Windows 10 / 11
 - **Claude Desktop installed from the Microsoft Store** (MSIX package named `Claude`)
 - Windows PowerShell 5.1 (ships with Windows — no install needed)
+
+> On a Mac? Jump to [macOS](#macos) — the same tool, ported to `claude-switch.sh`.
 
 ---
 
@@ -57,7 +62,7 @@ your first profile.
 
 ---
 
-## Usage
+## Usage (Windows)
 
 ### Quick helpers (double-click)
 
@@ -191,6 +196,91 @@ script.
 
 ---
 
+## macOS
+
+The macOS port is `claude-switch.sh` (zsh). It mirrors the Windows tool's move-based design, so
+everything under [How it works](#how-it-works) applies — only the platform mechanics differ.
+
+### Requirements (macOS)
+
+- macOS with **Claude Desktop** installed at `/Applications/Claude.app`
+  (bundle id `com.anthropic.claudefordesktop`)
+- zsh (the default macOS shell since Catalina) and the built-in `plutil` / `awk` / `pgrep`
+  — no extra install needed
+
+### Install
+
+```bash
+git clone https://github.com/lpaiu-cs/claude-switch.git
+cd claude-switch
+chmod +x claude-switch.sh *.command    # once, so the double-click launchers are runnable
+```
+
+As on Windows, the first run automatically labels your current install `main`.
+
+> **Run it from Terminal (or the Finder launchers) — never from a shell *inside* Claude
+> Desktop.** Switching/stopping tears down the whole Claude process tree; if it were launched
+> from Claude's own embedded terminal that would kill the session running it. The script detects
+> this case and refuses, but the clean way is a normal Terminal window.
+
+### Quick helpers (double-click in Finder)
+
+| File              | Action                                                              |
+| ----------------- | ------------------------------------------------------------------- |
+| `1-main.command`  | Switch to the `main` profile, then launch Claude                    |
+| `2-work.command`  | Switch to the `work` profile, then launch Claude                    |
+| `list.command`    | List profiles and show which one is active                          |
+| `menu.command`    | Interactive menu: pick a profile by number, or add a new one        |
+| `stop.command`    | Fully close Claude Desktop and everything it spawned — **run this before updating the app** |
+
+> The first double-click of a `.command` may be blocked by Gatekeeper (“unidentified
+> developer”). Right-click → **Open** once to approve it, or run the `.sh` from Terminal.
+
+### From a terminal
+
+```bash
+./claude-switch.sh <name>            # switch to <name>, then launch Claude
+./claude-switch.sh --list            # list profiles / show the active one
+./claude-switch.sh <name> --no-launch # switch only, don't launch
+./claude-switch.sh --setup           # (maintenance) link shared infra into every profile
+./claude-switch.sh --menu            # interactive menu: pick a profile by number, or add one
+./claude-switch.sh --stop            # fully close Claude Desktop + all its children (before updating)
+```
+
+Profile-name rules and the "unknown name = new empty profile" behavior are identical to Windows.
+
+### Layout (macOS)
+
+```
+Live (active)   ~/Library/Application Support/Claude                          (REAL folder)
+Inactive        ~/Library/Application Support/ClaudeProfiles/<name>
+Shared infra    ~/Library/Application Support/ClaudeShared/<vm_bundles|claude-code|claude-code-vm>
+Active marker   ~/Library/Application Support/ClaudeActiveProfile.txt
+```
+
+### How macOS differs from Windows
+
+- **No MSIX junction, no double-junction trap.** On macOS `~/Library/Application Support/Claude`
+  is a plain real folder, and a *single* symlink does not break Claude's atomic writes the way a
+  doubled Windows junction does. The move-based design is kept anyway (it's proven and safe), and
+  shared infra is linked in with ordinary **symlinks** (`ln -s`) instead of junctions.
+- **Shared store is seeded on the first switch.** When you switch *away* from a profile, its heavy
+  account-neutral folders (`vm_bundles` ≈ 6 GB, `claude-code`, `claude-code-vm`) are moved into
+  `ClaudeShared` once and symlinked back, so the profile you switch *to* reuses them instead of
+  re-downloading. Run `--setup` any time to (re)link them everywhere.
+- **Process handling.** `--stop` closes the whole Claude Desktop tree — the app, its Electron
+  helpers, and every child it spawned (the Claude Code CLI, its MCP servers, the sandbox VM),
+  matched by the app path and the live `--user-data-dir`. Your own shell and its ancestors are
+  never targeted, and the script refuses to run switch/stop from *inside* Claude Desktop.
+- **Updating Claude Desktop.** Fully quit with `stop.command` (or `--stop`) before updating, and
+  do updates from the `main` profile — same rationale as Windows, so the app's own files and the
+  shared infrastructure stay consistent. **Recommended flow:** `1-main.command` → work →
+  `stop.command` → update → relaunch with `1-main.command`.
+- **Claude Code session sync** works exactly as described above; the map lives at
+  `~/Library/Application Support/ClaudeShared/cc-sync-map.json`.
+
+---
+
 ## Safety & robustness
 
 - **Never deletes logins.** Switching only *moves* folders; your account data is preserved.
@@ -213,10 +303,12 @@ as a reference for how the shared-store restructure was done.
 
 ## Caveats
 
-- Windows-only, and only for the **Store (MSIX)** build of Claude Desktop.
+- Windows requires the **Store (MSIX)** build of Claude Desktop; macOS requires the standard
+  `/Applications/Claude.app` build.
 - Relies on Claude Desktop's internal folder layout, which may change in a future update.
-- Junctions require profiles to sit on the same volume — they do, since everything lives
-  under `LocalAppData`.
+- Moves and junctions/symlinks require profiles to sit on the same volume — they do, since
+  everything lives under `LocalAppData` (Windows) or `~/Library/Application Support` (macOS).
+- On macOS, run it from Terminal or the Finder launchers, not from a shell inside Claude Desktop.
 
 ---
 
@@ -230,9 +322,12 @@ as a reference for how the shared-store restructure was done.
 
 [English](#claude-switch)
 
-Windows에서 여러 **Claude Desktop**(Microsoft Store / MSIX) 계정 프로필을 전환하는 도구입니다 —
-한 번에 하나의 계정만 활성화되고, 수 기가바이트짜리 VM 번들을 다시 내려받지 않으며, 전환해도
-로그인이 유지됩니다.
+여러 **Claude Desktop** 계정 프로필을 전환하는 도구입니다 — 한 번에 하나의 계정만 활성화되고,
+수 기가바이트짜리 VM 번들을 다시 내려받지 않으며, 전환해도 로그인이 유지됩니다.
+
+**Windows**(Microsoft Store / MSIX, `claude-switch.ps1`)와 **macOS**(`claude-switch.sh`)에서 모두
+동작합니다. 두 포트는 동일한 이동 기반 설계를 공유합니다 — Mac 전용 사용법과 차이점은
+[macOS](#macos-1)를 참고하세요.
 
 > 비공식 커뮤니티 도구이며 Anthropic과 제휴하거나 승인받은 것이 아닙니다. Claude Desktop의 로컬
 > 데이터 폴더(문서화되지 않았고 앱 업데이트로 바뀔 수 있음)를 다룹니다. 사용에 따른 책임은
@@ -258,11 +353,13 @@ Claude Desktop(Store 버전)은 계정 데이터를 전부 하나의 폴더에 �
 프로필을 *옮겨 넣는* 방식입니다. 같은 볼륨 내 이동은 즉시 처리되는 이름 변경이라 전환이 빠르고
 안전합니다.
 
-### 요구 사항
+### 요구 사항 (Windows)
 
 - Windows 10 / 11
 - **Microsoft Store에서 설치한 Claude Desktop** (MSIX 패키지 이름 `Claude`)
 - Windows PowerShell 5.1 (Windows 기본 제공 — 별도 설치 불필요)
+
+> Mac 사용자라면 [macOS](#macos-1) 섹션으로 이동하세요 — 같은 도구를 `claude-switch.sh`로 포팅했습니다.
 
 ### 설치
 
@@ -291,7 +388,7 @@ Claude Desktop(Store 버전)은 계정 데이터를 전부 하나의 폴더에 �
 > 수행하고, 업데이트 직전에 `stop.cmd`로 앱을 완전히 닫으세요. 아래
 > [Claude Desktop 업데이트하기](#claude-desktop-업데이트하기) 참고.
 
-#### 터미널에서
+#### 터미널에서 (Windows)
 
 ```powershell
 .\claude-switch.ps1 <이름>            # <이름>으로 전환 후 Claude 실행
@@ -399,6 +496,86 @@ Claude Desktop은 Claude Code 세션을 데스크톱 계정별로
 파일이 없으면 아직 매핑이 없는 프로필은 동기화가 꺼진 채로 시작하고, 전환할 때마다 스스로
 채워집니다. `email`은 참고용 메모일 뿐 스크립트 로직에서는 쓰지 않습니다.
 
+### macOS
+
+macOS 포트는 `claude-switch.sh`(zsh)입니다. Windows 도구의 이동 기반 설계를 그대로 따르므로
+[동작 원리](#동작-원리)의 내용이 모두 적용되고, 플랫폼별 세부 구현만 다릅니다.
+
+#### 요구 사항 (macOS)
+
+- `/Applications/Claude.app`에 설치된 **Claude Desktop** (bundle id `com.anthropic.claudefordesktop`)
+- zsh(Catalina 이후 macOS 기본 셸)와 기본 제공 `plutil` / `awk` / `pgrep` — 추가 설치 불필요
+
+#### 설치
+
+```bash
+git clone https://github.com/lpaiu-cs/claude-switch.git
+cd claude-switch
+chmod +x claude-switch.sh *.command    # 더블클릭 런처를 실행 가능하게 (최초 1회)
+```
+
+Windows와 마찬가지로 처음 실행하면 현재 설치본이 자동으로 `main`으로 이름 붙습니다.
+
+> **터미널(또는 Finder 런처)에서 실행하세요 — Claude Desktop *내부*의 셸에서는 실행하지 마세요.**
+> 전환/종료는 Claude 프로세스 트리 전체를 내리므로, Claude 내장 터미널에서 실행하면 그 세션 자체가
+> 죽습니다. 스크립트가 이 상황을 감지해 거부하지만, 일반 Terminal 창에서 실행하는 것이 정석입니다.
+
+#### 빠른 헬퍼 (Finder에서 더블클릭)
+
+| 파일              | 동작                                              |
+| ----------------- | ------------------------------------------------- |
+| `1-main.command`  | `main` 프로필로 전환 후 Claude 실행               |
+| `2-work.command`  | `work` 프로필로 전환 후 Claude 실행               |
+| `list.command`    | 프로필 목록과 현재 활성 프로필 표시               |
+| `menu.command`    | 번호로 프로필을 고르거나 새로 추가하는 대화형 메뉴 |
+| `stop.command`    | Claude Desktop과 그것이 띄운 모든 프로세스를 완전히 종료 — **앱 업데이트 전에 실행** |
+
+> `.command`을 처음 더블클릭하면 Gatekeeper가 막을 수 있습니다("확인되지 않은 개발자").
+> 한 번 우클릭 → **열기**로 승인하거나, 터미널에서 `.sh`를 직접 실행하세요.
+
+#### 터미널에서 (macOS)
+
+```bash
+./claude-switch.sh <이름>            # <이름>으로 전환 후 Claude 실행
+./claude-switch.sh --list            # 프로필 목록 / 활성 프로필 표시
+./claude-switch.sh <이름> --no-launch # 전환만 하고 실행하지 않음
+./claude-switch.sh --setup           # (유지보수) 공유 인프라를 모든 프로필에 연결
+./claude-switch.sh --menu            # 대화형 메뉴: 번호로 프로필 선택 또는 새로 추가
+./claude-switch.sh --stop            # Claude Desktop과 모든 자식 프로세스를 완전히 종료 (업데이트 전에 실행)
+```
+
+프로필 이름 규칙과 "없는 이름 = 빈 프로필 새로 생성" 동작은 Windows와 동일합니다.
+
+#### 레이아웃 (macOS)
+
+```
+활성 (Live)     ~/Library/Application Support/Claude                          (실제 폴더)
+비활성          ~/Library/Application Support/ClaudeProfiles/<이름>
+공유 인프라     ~/Library/Application Support/ClaudeShared/<vm_bundles|claude-code|claude-code-vm>
+활성 표식       ~/Library/Application Support/ClaudeActiveProfile.txt
+```
+
+#### macOS가 Windows와 다른 점
+
+- **MSIX 정션이 없어 이중 정션 함정도 없음.** macOS에서 `~/Library/Application Support/Claude`는
+  평범한 실제 폴더이고, *단일* 심볼릭 링크는 Windows의 이중 정션과 달리 Claude의 원자적 쓰기를
+  깨뜨리지 않습니다. 그래도 검증된 이동 기반 설계를 유지하며, 공유 인프라는 정션 대신 일반
+  **심볼릭 링크**(`ln -s`)로 연결합니다.
+- **공유 저장소는 첫 전환에서 seed됩니다.** 어떤 프로필에서 *빠져나갈* 때 그 프로필의 무거운
+  계정-무관 폴더(`vm_bundles` 약 6 GB, `claude-code`, `claude-code-vm`)를 `ClaudeShared`로 한 번
+  옮겨 심링크로 되돌리므로, *전환해 들어가는* 프로필이 재다운로드 없이 재사용합니다. 언제든
+  `--setup`으로 모든 곳에 다시 연결할 수 있습니다.
+- **프로세스 처리.** `--stop`은 Claude Desktop 트리 전체 — 앱, Electron 헬퍼, 그리고 앱이 띄운 모든
+  자식(Claude Code CLI, MCP 서버, 샌드박스 VM) — 를 앱 경로와 활성 `--user-data-dir`로 매칭해
+  종료합니다. 자신의 셸과 그 조상은 절대 대상이 되지 않으며, Claude Desktop *내부*에서의
+  전환/종료 실행은 거부합니다.
+- **Claude Desktop 업데이트.** 업데이트 전에 `stop.command`(또는 `--stop`)로 완전히 종료하고,
+  업데이트는 `main` 프로필에서 수행하세요 — Windows와 같은 이유로 앱 파일과 공유 인프라를
+  일관되게 유지합니다. **권장 순서:** `1-main.command` → 작업 → `stop.command` → 업데이트 →
+  `1-main.command`로 다시 실행.
+- **Claude Code 세션 동기화**는 위 설명 그대로 동작하며, 매핑 파일은
+  `~/Library/Application Support/ClaudeShared/cc-sync-map.json`에 있습니다.
+
 ### 안전성 & 견고함
 
 - **로그인을 삭제하지 않습니다.** 전환은 폴더를 *옮기기만* 하며 계정 데이터는 보존됩니다.
@@ -417,10 +594,12 @@ Claude Desktop은 Claude Code 세션을 데스크톱 계정별로
 
 ### 주의 사항
 
-- Windows 전용이며 **Store(MSIX)** 버전 Claude Desktop에서만 동작합니다.
+- Windows는 **Store(MSIX)** 버전 Claude Desktop이, macOS는 표준 `/Applications/Claude.app`
+  버전이 필요합니다.
 - Claude Desktop의 내부 폴더 구조에 의존하므로 향후 업데이트로 바뀔 수 있습니다.
-- 정션은 프로필이 같은 볼륨에 있어야 하는데, 모든 데이터가 `LocalAppData` 아래에 있으므로 이
-  조건은 충족됩니다.
+- 이동과 정션/심링크는 프로필이 같은 볼륨에 있어야 하는데, 모든 데이터가 `LocalAppData`(Windows)
+  또는 `~/Library/Application Support`(macOS) 아래에 있으므로 이 조건은 충족됩니다.
+- macOS에서는 Claude Desktop 내부 셸이 아니라 터미널 또는 Finder 런처에서 실행하세요.
 
 ### 라이선스
 

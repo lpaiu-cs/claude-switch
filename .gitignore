@@ -4,6 +4,11 @@ ehthumbs.db
 desktop.ini
 $RECYCLE.BIN/
 
+# macOS shell cruft
+.DS_Store
+.AppleDouble
+._*
+
 # Editor / IDE
 .vs/
 .vscode/

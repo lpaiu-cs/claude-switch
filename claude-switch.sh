@@ -372,37 +372,88 @@ sync_push_lam() {
   _rewrite_session_paths "$v" "${CC_ACCT[$1]-}" "${CC_ORG[$1]-}"
 }
 
-# Self-heal the map: whichever account/org pair actually has the freshest session file in Live
-# becomes the map entry for profile <name>. Runs before pull (departing) and after activation
-# (arriving), so logging into a different account under a profile fixes itself on the next switch.
-update_cc_map_entry() {
-  local name=$1 sess="$LIVE/claude-code-sessions"
-  [[ -d $sess ]] || return 0
-  local acct_dir org_dir acct org f st latest
-  local best_acct='' best_org='' best_t=-1 seen=0
-  for acct_dir in "$sess"/*(N/); do
-    acct=${acct_dir:t}
-    for org_dir in "$acct_dir"/*(N/); do
+# --- Account identity detection ----------------------------------------------
+typeset -g UUID_GLOB='[0-9a-fA-F](#c8)-[0-9a-fA-F](#c4)-[0-9a-fA-F](#c4)-[0-9a-fA-F](#c4)-[0-9a-fA-F](#c12)'
+
+# accountUuid of whoever is logged in under Live, straight from the app's own config. This exists
+# right after login even if the account has never created a session, which the session-scan
+# heuristic below can't handle (a fresh account has no session files at all - the bootstrap gap
+# that used to leave new profiles permanently unmapped and content sync silently disabled).
+_config_account() {
+  local cfg="$LIVE/config.json" acct
+  [[ -f $cfg ]] || return 1
+  acct=$(plutil -extract lastKnownAccountUuid raw -o - "$cfg" 2>/dev/null) || return 1
+  [[ $acct == ${~UUID_GLOB} ]] || return 1
+  print -r -- "$acct"
+}
+
+# orgUuid for a given account: prefer real org dirs under Live's session stores (pick the freshest
+# if several), else fall back to the org-scoped dxt:allowlist* keys in config.json. config.json
+# contains JSON null values, which plutil's plist conversion rejects, so the keys are grepped raw.
+_org_for_account() {
+  local acct=$1 root org_dir org f st latest
+  local best_org='' best_t=-1
+  for root in "$LIVE/claude-code-sessions" "$LIVE/local-agent-mode-sessions"; do
+    for org_dir in "$root/$acct"/${~UUID_GLOB}(N/); do
       org=${org_dir:t}
-      (( seen++ ))
-      latest=-1
+      latest=$(stat -f %m "$org_dir" 2>/dev/null) || latest=0
       for f in "$org_dir"/local_*.json(N); do
         st=$(stat -f %m "$f" 2>/dev/null) || st=0
         (( st > latest )) && latest=$st
       done
-      (( latest < 0 )) && { latest=$(stat -f %m "$org_dir" 2>/dev/null) || latest=0; }
-      if (( latest > best_t )); then best_t=$latest; best_acct=$acct; best_org=$org; fi
+      [[ $org == "$best_org" ]] && continue
+      if (( latest > best_t )); then best_t=$latest; best_org=$org; fi
     done
   done
-  [[ -z $best_acct ]] && return 0
-  if [[ ${CC_ACCT[$name]-} == "$best_acct" && ${CC_ORG[$name]-} == "$best_org" ]]; then return 0; fi
-  CC_ACCT[$name]=$best_acct
-  CC_ORG[$name]=$best_org
+  if [[ -z $best_org && -f "$LIVE/config.json" ]]; then
+    best_org=$(LC_ALL=C grep -oE '"dxt:allowlist[A-Za-z]*:[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"' \
+      "$LIVE/config.json" 2>/dev/null | sed -E 's/.*:([0-9a-fA-F-]{36})"$/\1/' | sort -u | head -1)
+  fi
+  [[ -n $best_org ]] || return 1
+  print -r -- "$best_org"
+}
+
+# Self-heal the map entry for profile <name> from whatever is sitting in Live right now. Primary
+# source: the app's config.json (lastKnownAccountUuid + org detection above) - authoritative for
+# who is logged in NOW and present even for a brand-new account with zero sessions. Fallback:
+# whichever account/org pair has the freshest session file (covers app versions without
+# lastKnownAccountUuid). Runs before pull (departing profile) and after activation (arriving
+# profile), so logging into a different account under a profile fixes itself on the next switch.
+update_cc_map_entry() {
+  local name=$1
+  local acct='' org='' note=''
+
+  acct=$(_config_account) && org=$(_org_for_account "$acct") || { acct=''; org=''; }
+
+  if [[ -z $acct || -z $org ]]; then
+    # Fallback: freshest session file across all account/org dirs in Live.
+    local sess="$LIVE/claude-code-sessions" acct_dir org_dir a o f st latest
+    local best_t=-1 seen=0
+    [[ -d $sess ]] || return 0
+    for acct_dir in "$sess"/*(N/); do
+      a=${acct_dir:t}
+      for org_dir in "$acct_dir"/*(N/); do
+        o=${org_dir:t}
+        (( seen++ ))
+        latest=-1
+        for f in "$org_dir"/local_*.json(N); do
+          st=$(stat -f %m "$f" 2>/dev/null) || st=0
+          (( st > latest )) && latest=$st
+        done
+        (( latest < 0 )) && { latest=$(stat -f %m "$org_dir" 2>/dev/null) || latest=0; }
+        if (( latest > best_t )); then best_t=$latest; acct=$a; org=$o; fi
+      done
+    done
+    (( seen > 1 )) && note=" ($seen accounts seen under this profile, picked most recently active)"
+  fi
+
+  [[ -n $acct && -n $org ]] || return 0
+  if [[ ${CC_ACCT[$name]-} == "$acct" && ${CC_ORG[$name]-} == "$org" ]]; then return 0; fi
+  CC_ACCT[$name]=$acct
+  CC_ORG[$name]=$org
   [[ -n ${CC_EMAIL[$name]-} ]] || CC_EMAIL[$name]=''
   save_cc_map
-  local note=''
-  (( seen > 1 )) && note=" ($seen accounts seen under this profile, picked most recently active)"
-  info "[cc-sync] '$name' account changed -> map updated to $best_acct$note"
+  info "[cc-sync] '$name' account changed -> map updated to $acct$note"
 }
 
 # --- Launch ------------------------------------------------------------------

@@ -9,8 +9,9 @@
     claude-switch.ps1 <name> -NoLaunch  switch only, do not launch
     claude-switch.ps1 -Setup            (maintenance) ensure shared infra is linked everywhere
     claude-switch.ps1 -Menu             interactive menu: add / pick a profile by number
-    claude-switch.ps1 -Stop             fully close Claude Desktop + all its children (run this
-                                        before updating the app, or it may fail with a file lock)
+    claude-switch.ps1 -Stop             fully close Claude Desktop + all its children (run before
+                                        updating the app; also clears a stuck update's file-lock
+                                        dialog without a reboot - see README)
 
   Why move-based:
     %APPDATA%\Claude is an MSIX junction -> ...\LocalCache\Roaming\Claude  (the "Live" folder).
@@ -273,13 +274,17 @@ New-Item -ItemType Directory -Force -Path $P.Store, $P.Shared | Out-Null
 # --- Stop: fully close Claude Desktop and everything it spawned (Claude Code CLI, Node services,
 # sandbox VM). Run this before updating Claude Desktop: those children inherit the MSIX package
 # identity and, if left alive, lock the package so the update fails with "Another program is
-# currently using this file" (needing a reboot). Kept side-effect-free (no folder moves). ---
+# currently using this file" (needing a reboot). Also the no-reboot recovery for an update that
+# already got stuck: the in-app updater's own quit-for-update doesn't take the tree down either,
+# and the surviving old-version processes (their images now under WindowsApps\Deleted\Claude_*,
+# still matched by the root predicate) make every relaunch fail with the same dialog until they
+# die. Kept side-effect-free (no folder moves). ---
 if ($Stop) {
   $lock = Acquire-Lock
   try {
     Stop-ClaudeDesktop
     Write-Host "Claude Desktop and all its background processes are stopped." -ForegroundColor Green
-    Write-Host "You can now update Claude Desktop safely." -ForegroundColor Green
+    Write-Host "You can now update or relaunch Claude Desktop safely." -ForegroundColor Green
   } finally { Release-Lock $lock }
   return
 }

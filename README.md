@@ -45,12 +45,29 @@ instant renames, so switching is fast and safe.
 
 ## Install
 
-1. Download or clone this repo anywhere (keep the files together):
-   ```
-   git clone https://github.com/lpaiu-cs/claude-switch.git
-   ```
-2. That's it. Use the `.cmd` helpers by double-clicking, or call `claude-switch.ps1` from a
-   terminal.
+### Easiest — download the release (no tooling needed)
+
+1. Download `claude-switch-<version>.zip` from the
+   [latest release](https://github.com/lpaiu-cs/claude-switch/releases/latest).
+2. Right-click the zip and choose **Extract All**. Running it from inside the zip does not
+   work.
+3. Double-click **`시작하기.cmd`** ("start here"). It verifies you have the Store build of
+   Claude Desktop, then opens the profile menu. If Windows shows *"Windows protected your
+   PC"*, click **More info → Run anyway** — that prompt appears for any script downloaded
+   from the internet.
+
+The archive also contains **`사용설명서.md`**, a step-by-step Korean guide written for people
+who aren't comfortable with a terminal.
+
+### With git
+
+```
+git clone https://github.com/lpaiu-cs/claude-switch.git
+```
+
+Either way, keep the files together in one folder — every `.cmd` helper resolves
+`claude-switch.ps1` relative to its own location. Then double-click a `.cmd` helper, or call
+`claude-switch.ps1` from a terminal.
 
 The first time you run it, the current install is automatically labeled `main` and becomes
 your first profile.
@@ -63,6 +80,7 @@ your first profile.
 
 | File          | Action                                             |
 | ------------- | -------------------------------------------------- |
+| `시작하기.cmd` | **Start here.** Guided entry point: checks your setup, explains the options, then opens the profile menu |
 | `1-main.cmd`  | Switch to the `main` profile, then launch Claude   |
 | `2-work.cmd`  | Switch to the `work` profile, then launch Claude   |
 | `list.cmd`    | List profiles and show which one is active         |
@@ -83,6 +101,7 @@ your first profile.
 .\claude-switch.ps1 -Setup            # (maintenance) link shared infra into every profile
 .\claude-switch.ps1 -Menu             # interactive menu: pick a profile by number, or add one
 .\claude-switch.ps1 -Stop             # fully close Claude Desktop + all its children (do this before updating)
+.\claude-switch.ps1 -Version          # print the version of this copy
 ```
 
 - Switching to an **unknown name** creates a new empty profile — just log in with the other
@@ -229,6 +248,35 @@ script.
 
 ---
 
+## Releasing (maintainer)
+
+Versions follow [SemVer](https://semver.org/), and `$ScriptVersion` in `claude-switch.ps1` is
+the single source of truth. The release tag must match it — the build fails otherwise.
+
+1. Bump `$ScriptVersion` in `claude-switch.ps1` and add the matching `CHANGELOG.md` entry.
+2. Commit, then tag and push:
+   ```powershell
+   git tag -a v1.0.0 -m "claude-switch v1.0.0"
+   git push origin v1.0.0
+   ```
+3. The `Release` workflow builds `dist/claude-switch-<version>.zip`, verifies its contents,
+   and publishes the GitHub Release with the archive and its `.sha256` attached.
+
+To build the archive locally without tagging:
+
+```powershell
+.\tools\build-release.ps1
+```
+
+Running the workflow manually (`workflow_dispatch`) builds and uploads the archive as a
+CI artifact without publishing a release — useful for checking the bundle before tagging.
+
+The archive ships only what an end user needs: `claude-switch.ps1`, the `.cmd` helpers,
+`시작하기.cmd`, `사용설명서.md`, `README.md`, `CHANGELOG.md`, and `LICENSE`. `examples/`,
+`tools/`, and `.github/` are excluded.
+
+---
+
 ## `examples/`
 
 `examples/setup-shared.ps1` is the author's **personal one-time migration** (it relabels an
@@ -293,11 +341,28 @@ Claude Desktop(Store 버전)은 계정 데이터를 전부 하나의 폴더에 �
 
 ### 설치
 
-1. 이 저장소를 아무 곳에나 내려받거나 클론합니다(파일들은 같은 폴더에 함께 두세요):
-   ```
-   git clone https://github.com/lpaiu-cs/claude-switch.git
-   ```
-2. 끝입니다. `.cmd` 헬퍼를 더블클릭하거나 터미널에서 `claude-switch.ps1`을 실행하세요.
+#### 가장 쉬운 방법 — 릴리스 내려받기 (개발 도구 불필요)
+
+1. [최신 릴리스](https://github.com/lpaiu-cs/claude-switch/releases/latest)에서
+   `claude-switch-<버전>.zip` 을 내려받습니다.
+2. zip 파일에 마우스 오른쪽 클릭 → **압축 풀기**. 압축을 풀지 않고 zip 안에서 바로 실행하면
+   동작하지 않습니다.
+3. **`시작하기.cmd`** 를 더블클릭합니다. Store 버전 Claude Desktop이 설치돼 있는지 확인한 뒤
+   프로필 메뉴를 띄웁니다. *"Windows가 PC를 보호했습니다"* 창이 뜨면 **추가 정보 → 실행**을
+   누르세요 — 인터넷에서 내려받은 스크립트에는 항상 나오는 안내입니다.
+
+압축 안에는 터미널에 익숙하지 않은 사람을 위한 단계별 한국어 안내 **`사용설명서.md`** 도 들어
+있습니다.
+
+#### git으로
+
+```
+git clone https://github.com/lpaiu-cs/claude-switch.git
+```
+
+어느 방법이든 파일들은 **같은 폴더에 함께 두세요** — 모든 `.cmd` 헬퍼가 자기 위치를 기준으로
+`claude-switch.ps1`을 찾습니다. 그 뒤 `.cmd` 헬퍼를 더블클릭하거나 터미널에서
+`claude-switch.ps1`을 실행하세요.
 
 처음 실행하면 현재 설치본이 자동으로 `main`으로 이름 붙고 첫 번째 프로필이 됩니다.
 
@@ -307,6 +372,7 @@ Claude Desktop(Store 버전)은 계정 데이터를 전부 하나의 폴더에 �
 
 | 파일          | 동작                                       |
 | ------------- | ------------------------------------------ |
+| `시작하기.cmd` | **여기서 시작.** 환경을 확인하고 사용법을 안내한 뒤 프로필 메뉴를 띄웁니다 |
 | `1-main.cmd`  | `main` 프로필로 전환 후 Claude 실행        |
 | `2-work.cmd`  | `work` 프로필로 전환 후 Claude 실행        |
 | `list.cmd`    | 프로필 목록과 현재 활성 프로필 표시        |
@@ -327,6 +393,7 @@ Claude Desktop(Store 버전)은 계정 데이터를 전부 하나의 폴더에 �
 .\claude-switch.ps1 -Setup            # (유지보수) 공유 인프라를 모든 프로필에 연결
 .\claude-switch.ps1 -Menu             # 대화형 메뉴: 번호로 프로필 선택 또는 새로 추가
 .\claude-switch.ps1 -Stop             # Claude Desktop과 모든 자식 프로세스를 완전히 종료 (업데이트 전에 실행)
+.\claude-switch.ps1 -Version          # 현재 사본의 버전 출력
 ```
 
 - **없는 이름**으로 전환하면 빈 프로필이 새로 만들어집니다 — Claude 실행 후 다른 계정으로

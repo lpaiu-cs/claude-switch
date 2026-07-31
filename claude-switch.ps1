@@ -12,6 +12,7 @@
     claude-switch.ps1 -Stop             fully close Claude Desktop + all its children (run before
                                         updating the app; also clears a stuck update's file-lock
                                         dialog without a reboot - see README)
+    claude-switch.ps1 -Version          print the tool version and exit
 
   Why move-based:
     %APPDATA%\Claude is an MSIX junction -> ...\LocalCache\Roaming\Claude  (the "Live" folder).
@@ -38,10 +39,21 @@ param(
   [switch]$NoLaunch,
   [switch]$Setup,
   [switch]$Menu,
-  [switch]$Stop
+  [switch]$Stop,
+  [switch]$Version
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Tool version. Kept in sync with the git tag / GitHub release, which is tagged "v$ScriptVersion".
+$ScriptVersion = '1.0.0'
+
+# Answered before anything touches the Claude install, so -Version works even where Claude
+# Desktop isn't present (e.g. someone checking what they downloaded).
+if ($Version) {
+  Write-Host "claude-switch $ScriptVersion"
+  return
+}
 
 # Account-neutral folders shared across all profiles via junctions.
 $SharedFolders = @('vm_bundles', 'claude-code', 'claude-code-vm')

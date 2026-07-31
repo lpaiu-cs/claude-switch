@@ -15,3 +15,6 @@ $RECYCLE.BIN/
 *.tmp
 *.bak
 claude-switch.lock
+
+# Release build output (tools/build-release.ps1)
+dist/

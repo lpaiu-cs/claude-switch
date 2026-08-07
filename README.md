@@ -3,7 +3,7 @@
 # claude-switch
 
 **Use more than one Claude Desktop account on Windows.**
-Switch in a second, stay logged in, don't re-download the 11 GB VM bundle.
+Switch in a second, stay logged in, keep your work session.
 
 [**English**](#quick-start) · [**한국어**](#한국어) · [Download](https://github.com/lpaiu-cs/claude-switch/releases/latest) · [Changelog](CHANGELOG.md)
 
@@ -361,7 +361,7 @@ for how the restructure was done.
 [English](#claude-switch)
 
 **Windows에서 Claude Desktop 계정을 여러 개 쓰는 도구입니다.**
-1초 만에 전환되고, 로그인이 유지되고, 11GB VM 번들을 다시 내려받지 않습니다.
+1초 만에 전환되고, 로그인이 유지되고, 작업 세션이 유지됩니다.
 
 </div>
 

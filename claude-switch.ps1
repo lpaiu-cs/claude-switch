@@ -23,11 +23,17 @@
     Fix: keep Live as a REAL folder = the active profile (single junction, like a normal install).
     Switching = move the active profile out to the store and move the target profile in.
     Moves are same-volume renames (instant), and inner shared junctions keep their absolute targets.
+    2026-09-02: the same ENOENT turns out to hit a junction INSIDE Live too. The bundled Claude
+    Code updater's tmp -> rename of a NEW claude.exe failed through the shared claude-code junction
+    for ten releases straight, and the failure was invisible because the app just fell back to the
+    last version that had installed. So claude-code / claude-code-vm are per-profile REAL folders
+    now; vm_bundles stays junctioned because duplicating ~11 GB per profile is the worse trade.
 
   Layout:
     Live (active)  %LOCALAPPDATA%\Packages\<pkg>\LocalCache\Roaming\Claude   (REAL folder)
     Inactive       ...\Roaming\ClaudeProfiles\<name>
-    Shared infra   ...\Roaming\ClaudeShared\<vm_bundles|claude-code|claude-code-vm>  (junctioned in)
+    Shared infra   ...\Roaming\ClaudeSharedm_bundles                    (junctioned in)
+    Per-profile    <profile>\<claude-code|claude-code-vm>                  (REAL folders)
     Active marker  ...\Roaming\ClaudeActiveProfile.txt
 #>
 
@@ -56,7 +62,19 @@ if ($Version) {
 }
 
 # Account-neutral folders shared across all profiles via junctions.
-$SharedFolders = @('vm_bundles', 'claude-code', 'claude-code-vm')
+#
+# claude-code / claude-code-vm were REMOVED from sharing on 2026-09-02. The desktop's bundled
+# Claude Code updater unpacks a release to claude.exe.decompress.tmp and renames it onto
+# claude.exe, and that atomic NEW-file write fails with ENOENT through a junction. The download
+# succeeded every time and only the final rename died, so the app just logged "Falling back to
+# installed version" and kept running an old CLI - invisibly, for ten releases, until the API
+# refused a model the pinned version didn't know. They are real per-profile folders now.
+$SharedFolders = @('vm_bundles')
+
+# Subfolders of the live profile that host spawned children (Claude Code CLI, sandbox VM). Used
+# ONLY for process detection in Stop-ClaudeDesktop, and deliberately NOT the same list as
+# $SharedFolders: a folder stops being shared without its children stopping being ours to kill.
+$ChildHostFolders = @('vm_bundles', 'claude-code', 'claude-code-vm')
 
 function Resolve-ClaudePaths {
   $pkg = Get-AppxPackage -Name 'Claude' | Select-Object -First 1
@@ -102,9 +120,10 @@ function Get-ClaudeDesktopProcesses {
     $children[$pp].Add($id)
   }
   # A process is a Claude Desktop root if it is the packaged binary (WindowsApps\...\Claude...) or
-  # runs from one of the junctioned Claude subfolders (claude-code, claude-code-vm, vm_bundles),
-  # which live under Live via a junction - i.e. a Claude Code CLI or sandbox VM child.
-  $junctionPats = @($SharedFolders | ForEach-Object { "*\Claude\$_\*" })
+  # runs from one of the Claude subfolders that host spawned children (claude-code,
+  # claude-code-vm, vm_bundles) - i.e. a Claude Code CLI or sandbox VM child. Whether those are
+  # junctions or real folders is irrelevant here; what matters is that the processes are ours.
+  $junctionPats = @($ChildHostFolders | ForEach-Object { "*\Claude\$_\*" })
   $seen  = New-Object 'System.Collections.Generic.HashSet[int]'
   $queue = New-Object 'System.Collections.Generic.Queue[int]'
   foreach ($p in $all) {
@@ -193,6 +212,28 @@ function Release-Lock([string]$lock) {
 
 function Ensure-SharedLinks([string]$profileDir) {
   New-Item -ItemType Directory -Force -Path $P.Shared | Out-Null
+
+  # Un-share: a folder that used to be junctioned into every profile but is no longer in
+  # $SharedFolders has to become a REAL folder here, or the app's atomic new-file writes keep
+  # failing through the junction (see the $SharedFolders note). Dropping the link with rmdir
+  # never touches the target. The shared original is left in place on purpose: other profiles
+  # may still point at it, and deleting it would hand them a dangling junction. Delete
+  # ClaudeShared\<name> by hand once every profile has been converted.
+  foreach ($name in $ChildHostFolders) {
+    if ($SharedFolders -contains $name) { continue }
+    $link = Join-Path $profileDir $name
+    $item = Get-Item $link -Force -ErrorAction SilentlyContinue
+    if (-not ($item -and $item.LinkType)) { continue }
+    $shareTarget = Join-Path $P.Shared $name
+    Remove-Junction $link
+    if (Test-Path $shareTarget) {
+      Write-Host "[un-share] $name -> real folder in '$(Split-Path $profileDir -Leaf)' (copying)..." -ForegroundColor Cyan
+      Copy-Item -LiteralPath $shareTarget -Destination $link -Recurse -Force
+    } else {
+      New-Item -ItemType Directory -Force -Path $link | Out-Null
+    }
+  }
+
   foreach ($name in $SharedFolders) {
     $shareTarget = Join-Path $P.Shared $name
     $link        = Join-Path $profileDir $name

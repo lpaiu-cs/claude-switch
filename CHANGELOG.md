@@ -6,6 +6,32 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Release tags are `v<version>` (e.g. `v1.0.0`), and `claude-switch.ps1 -Version` reports the
 version of the copy you have.
 
+## [Unreleased]
+
+### Changed
+
+- **`claude-code` and `claude-code-vm` are no longer shared between profiles.** Claude Desktop's
+  bundled Claude Code updater unpacks a release to `claude.exe.decompress.tmp` and renames it onto
+  `claude.exe`; that atomic *new-file* write fails with `ENOENT` through a junction. Every download
+  finished and only the rename died, so the app silently logged `Falling back to installed version`
+  and kept running the last CLI that installed before the updater changed its write strategy — ten
+  releases, until the API rejected a model the pinned version didn't support. Both are real
+  per-profile folders now (~1.2 GB per profile). `vm_bundles` (~11 GB) stays shared; its own bundle
+  downloads hit the same failure and still need finalising by hand.
+- **`-Setup` converts profiles that still hold the old junctions.** The junction is dropped with
+  `rmdir` (which never touches the target) and the shared content is copied in. The shared
+  originals are deliberately left behind — other profiles may still point at them — so remove
+  `ClaudeShared\claude-code` and `ClaudeShared\claude-code-vm` by hand once every profile is done.
+
+### Fixed
+
+- **`-Stop` keeps matching Claude Code children after a folder stops being shared.** Process
+  detection read the same `$SharedFolders` list that drives junction creation, so un-sharing a
+  folder would have stopped `Stop-ClaudeDesktop` from matching processes running out of it —
+  leaving the MSIX package in use and reviving the "Another program is currently using this file"
+  update failure. The two meanings now have separate lists (`$SharedFolders` for what gets
+  junctioned, `$ChildHostFolders` for where our children run).
+
 ## [1.0.0] - 2026-07-31
 
 First tagged release. Packaged so it can be downloaded and run without any developer tooling.

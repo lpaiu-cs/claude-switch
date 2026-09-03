@@ -137,7 +137,7 @@ Claude Desktop is an MSIX (Store) package. Closing the window leaves two kinds o
 - **Background package processes** — renderer / Node-utility / crashpad helpers that still carry
   the app's *package identity*.
 - **Child processes** it spawned — the Claude Code CLI and the sandbox VM, running out of the
-  junctioned `claude-code` / `vm_bundles` folders.
+  `claude-code` / `vm_bundles` folders under the live profile.
 
 While *any* process carries the package identity, Windows treats the package as **in use**, so
 an update can't replace the installed files. The half-applied update only finalises after a
@@ -152,9 +152,8 @@ something still holds the lock.
 This is also why a normal profile switch now stops the whole tree: a leftover child holding a
 handle inside the live folder would break the folder move.
 
-Updating from `main` keeps the shared, account-neutral folders (`vm_bundles`, `claude-code`,
-`claude-code-vm`) consistent for every profile. After a big update you can re-link them anywhere
-with `claude-switch.ps1 -Setup`.
+Updating from `main` keeps the shared, account-neutral `vm_bundles` folder consistent for every
+profile. After a big update you can re-link it anywhere with `claude-switch.ps1 -Setup`.
 
 </details>
 
@@ -212,7 +211,7 @@ A reboot isn't actually needed:
 ```
 Active profile   ...\LocalCache\Roaming\Claude                    ← a REAL folder
 Inactive         ...\LocalCache\Roaming\ClaudeProfiles\<name>
-Shared folders   ...\LocalCache\Roaming\ClaudeShared\<vm_bundles|claude-code|claude-code-vm>
+Shared folder    ...\LocalCache\Roaming\ClaudeSharedm_bundles   ← junctioned into each profile
 Active marker    ...\LocalCache\Roaming\ClaudeActiveProfile.txt
 ```
 
@@ -251,10 +250,19 @@ folders instead of re-pointing a link.
 
 ### Shared folders, stored once
 
-The heavy account-neutral folders — `vm_bundles` (~11 GB), `claude-code`, `claude-code-vm` — live
-**once** in `ClaudeShared` and are junctioned into every profile. A new account reuses them
-instead of re-provisioning, which is what used to cause the "claude update error" on a fresh
-profile. Re-link them any time with `-Setup`.
+`vm_bundles` (~11 GB) lives **once** in `ClaudeShared` and is junctioned into every profile. A new
+account reuses it instead of re-provisioning the sandbox VM, which is what used to cause the
+"claude update error" on a fresh profile. Re-link it any time with `-Setup`.
+
+`claude-code` and `claude-code-vm` were shared the same way until 2026-09-02 and no longer are.
+Claude Desktop's bundled Claude Code updater unpacks each release to `claude.exe.decompress.tmp`
+and renames it onto `claude.exe` — an atomic **new-file** write, which fails with `ENOENT` through
+a junction. Every download finished and only the final rename died, so nothing looked broken: the
+app logged `Falling back to installed version` and went on running an old CLI. It stayed invisible
+for ten releases, until the API refused a model the pinned version didn't know. Both are real
+per-profile folders now (~1.2 GB per profile), and `-Setup` converts any profile still holding the
+old junctions. `vm_bundles` keeps its junction — its own bundle downloads hit the same failure, but
+duplicating ~11 GB per profile is the worse trade, so a changed bundle needs finalising by hand.
 
 ### Claude Code sessions sync themselves
 
@@ -493,8 +501,8 @@ Claude Desktop은 MSIX(Store) 패키지입니다. 창을 닫아도 두 종류가
 
 - **백그라운드 패키지 프로세스** — 앱의 *패키지 정체성(package identity)* 을 그대로 지닌
   렌더러 / Node 유틸리티 / crashpad 헬퍼.
-- **앱이 띄운 자식 프로세스** — 정션된 `claude-code` / `vm_bundles` 폴더에서 실행되는 Claude Code
-  CLI와 샌드박스 VM.
+- **앱이 띄운 자식 프로세스** — 활성 프로필의 `claude-code` / `vm_bundles` 폴더에서 실행되는
+  Claude Code CLI와 샌드박스 VM.
 
 패키지 정체성을 가진 프로세스가 **하나라도** 살아 있으면 Windows는 패키지를 **사용 중**으로
 판단해 업데이트가 설치 파일을 교체하지 못합니다. 반쯤 적용된 업데이트는 재부팅해야 마무리되는데,
@@ -508,9 +516,8 @@ PID로 확인합니다. 그래서 무언가 아직 잠금을 쥐고 있는데 "�
 일반 프로필 전환도 트리 전체를 종료하는 이유가 같습니다. 살아남은 자식이 활성 폴더 안에 핸들을
 걸고 있으면 폴더 이동이 깨집니다.
 
-`main` 에서 업데이트하면 모든 프로필이 공유하는 계정 무관 폴더(`vm_bundles`, `claude-code`,
-`claude-code-vm`)도 일관되게 유지됩니다. 큰 업데이트 후에는 언제든 `claude-switch.ps1 -Setup`
-으로 다시 연결할 수 있습니다.
+`main` 에서 업데이트하면 모든 프로필이 공유하는 계정 무관 폴더 `vm_bundles` 도 일관되게
+유지됩니다. 큰 업데이트 후에는 언제든 `claude-switch.ps1 -Setup` 으로 다시 연결할 수 있습니다.
 
 </details>
 
@@ -567,7 +574,7 @@ PID로 확인합니다. 그래서 무언가 아직 잠금을 쥐고 있는데 "�
 ```
 활성 프로필     ...\LocalCache\Roaming\Claude                    ← 실제 폴더
 비활성          ...\LocalCache\Roaming\ClaudeProfiles\<이름>
-공유 폴더       ...\LocalCache\Roaming\ClaudeShared\<vm_bundles|claude-code|claude-code-vm>
+공유 폴더       ...\LocalCache\Roaming\ClaudeSharedm_bundles   ← 각 프로필에 정션으로 연결
 활성 표식       ...\LocalCache\Roaming\ClaudeActiveProfile.txt
 ```
 
@@ -605,10 +612,20 @@ claude-switch는 이중 정션을 아예 피합니다. 활성 `Claude` 폴더는
 
 ### 무거운 폴더는 한 번만 저장
 
-계정과 무관한 무거운 폴더 — `vm_bundles`(약 11GB), `claude-code`, `claude-code-vm` — 는
-`ClaudeShared` 에 **한 번만** 저장되고 모든 프로필에 정션으로 연결됩니다. 새 계정은 이를 다시
-받지 않고 재사용합니다. 예전에 빈 새 프로필에서 "claude update error" 가 나던 원인이 바로 이
-부분입니다. 언제든 `-Setup` 으로 다시 연결할 수 있습니다.
+`vm_bundles`(약 11GB)는 `ClaudeShared` 에 **한 번만** 저장되고 모든 프로필에 정션으로
+연결됩니다. 새 계정은 샌드박스 VM을 다시 받지 않고 재사용합니다. 예전에 빈 새 프로필에서
+"claude update error" 가 나던 원인이 바로 이 부분입니다. 언제든 `-Setup` 으로 다시 연결할 수
+있습니다.
+
+`claude-code` 와 `claude-code-vm` 도 2026-09-02 까지는 같은 방식으로 공유했지만 지금은
+아닙니다. Claude Desktop 에 딸린 Claude Code 갱신기는 릴리스를 `claude.exe.decompress.tmp` 로
+풀고 `claude.exe` 로 rename 하는데, 이 **새 파일** atomic write 가 정션 너머에서 `ENOENT` 로
+실패합니다. 다운로드는 매번 끝났고 마지막 rename 만 죽었기 때문에 겉으로는 멀쩡했습니다 —
+앱은 `Falling back to installed version` 만 남기고 낡은 CLI 로 계속 돌았습니다. 그렇게 열 개
+릴리스를 아무도 모른 채 지나, 고정된 버전이 모르는 모델을 API 가 거부하고서야 드러났습니다.
+지금은 둘 다 프로필별 실폴더이고(프로필당 약 1.2GB), 아직 옛 정션을 쥔 프로필은 `-Setup` 이
+전환해 줍니다. `vm_bundles` 는 정션을 유지합니다 — 같은 고장을 겪지만 프로필마다 11GB 를
+중복하는 쪽이 더 나쁜 거래라, 번들이 바뀌면 수동으로 마무리해야 합니다.
 
 ### Claude Code 세션은 알아서 동기화됩니다
 

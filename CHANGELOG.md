@@ -6,7 +6,7 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Release tags are `v<version>` (e.g. `v1.0.0`), and `claude-switch.ps1 -Version` reports the
 version of the copy you have.
 
-## [Unreleased]
+## [1.1.0] - 2026-09-03
 
 ### Changed
 

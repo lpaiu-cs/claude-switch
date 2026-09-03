@@ -52,7 +52,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # Tool version. Kept in sync with the git tag / GitHub release, which is tagged "v$ScriptVersion".
-$ScriptVersion = '1.0.0'
+$ScriptVersion = '1.1.0'
 
 # Answered before anything touches the Claude install, so -Version works even where Claude
 # Desktop isn't present (e.g. someone checking what they downloaded).

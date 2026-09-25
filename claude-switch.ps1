@@ -284,6 +284,23 @@ function Sync-PushCC([string]$name) {
     }
   }
 }
+
+# Login creates the account/org directory only AFTER the first launch. Finish that
+# first import with the app stopped, using the normal switch path on the same profile.
+function Complete-CCFirstLogin([string]$name) {
+  Write-Host "[cc-sync] Log in to Claude first. Your existing Code sessions have not been imported yet." -ForegroundColor Yellow
+  $answer = Read-Host "After login, press Enter to import sessions and restart Claude (Q to skip)"
+  if ($answer -ne '') { return }
+  if ((Get-Active) -ne $name) {
+    Write-Warning "Active profile changed. Run the launcher for '$name' again to import sessions."
+    return
+  }
+  if (-not (Get-ChildItem (Join-Path $P.Live 'claude-code-sessions\*\*') -Directory -ErrorAction SilentlyContinue)) {
+    Write-Warning "No Code account directory yet. Open the Code tab, then run the same profile launcher again."
+    return
+  }
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath $name
+}
 function Save-CCSyncMap {
   New-Item -ItemType Directory -Force -Path $P.Shared | Out-Null
   $ordered = [ordered]@{}
@@ -452,8 +469,9 @@ try {
   Stop-ClaudeDesktop
   $active = Get-Active
   # Capture the outgoing/active account's CC sessions into the shared canonical store
-  # (Live still holds the active profile here). Never let a sync error block switching.
-  try { if ($active) { Update-CCMapEntry $active; Sync-PullCC $active } } catch { Write-Host "[cc-sync] pull skipped: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+  # Also import before stashing: a newly logged-in profile may never have received
+  # the canonical sessions because its account directory did not exist at launch.
+  try { if ($active) { Update-CCMapEntry $active; Sync-PullCC $active; Sync-PushCC $active } } catch { Write-Host "[cc-sync] outgoing sync failed: $($_.Exception.Message)" -ForegroundColor DarkYellow }
   if ($active -ne $ProfileName) {
     # Stash the currently active profile (sitting at Live) back into the store.
     $stashed = $null
@@ -496,4 +514,9 @@ try {
   }
 } finally {
   Release-Lock $lock
+}
+
+# Do not hold the switch lock while the user completes browser login.
+if (-not $NoLaunch -and -not (Get-CCViewDir $ProfileName)) {
+  Complete-CCFirstLogin $ProfileName
 }

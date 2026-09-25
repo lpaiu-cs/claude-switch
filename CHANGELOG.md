@@ -6,6 +6,16 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Release tags are `v<version>` (e.g. `v1.0.0`), and `claude-switch.ps1 -Version` reports the
 version of the copy you have.
 
+## [Unreleased]
+
+### Fixed
+
+- Finish the initial Code-session import after a new profile logs in: the account/org
+  directory does not exist before that first launch. The launcher now asks the user
+  to finish login and press Enter to restart and import, without holding the switch lock.
+- Import canonical sessions into the outgoing profile too, so a newly logged-in
+  profile receives the existing tasks before it is stashed.
+
 ## [1.1.0] - 2026-09-03
 
 ### Changed

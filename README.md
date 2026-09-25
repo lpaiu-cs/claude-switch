@@ -629,6 +629,12 @@ claude-switch는 이중 정션을 아예 피합니다. 활성 `Claude` 폴더는
 
 ### Claude Code 세션은 알아서 동기화됩니다
 
+**새 프로필의 첫 로그인은 한 단계가 더 필요합니다.** 로그인 전에는 계정 ID를 알 수 없어
+기존 작업을 복사할 수 없습니다. 새 계정으로 로그인하고 Code 탭을 연 다음, 실행해 둔
+전환 창에서 Enter를 누르면 Claude를 재시작하고 기존 세션을 가져옵니다. Q로 건너뛰었거나
+`-NoLaunch`를 썼다면 로그인 후 같은 프로필 실행기를 한 번 더 실행하세요.
+새로 로그인한 프로필에서 다른 프로필로 나갈 때도 기존 세션을 채워 둡니다.
+
 Claude Desktop은 Claude Code 세션을 계정별로
 `claude-code-sessions\<accountUuid>\<orgUuid>\local_*.json` 아래에 저장합니다. 이 파일들은 정션으로
 연결할 수 **없어서**(같은 원자적 쓰기 문제) claude-switch가 전환할 때마다 앱이 닫힌 상태에서 정규

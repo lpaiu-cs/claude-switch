@@ -6,7 +6,7 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Release tags are `v<version>` (e.g. `v1.0.0`), and `claude-switch.ps1 -Version` reports the
 version of the copy you have.
 
-## [Unreleased]
+## [1.2.0] - 2026-09-27
 
 ### Changed
 
@@ -14,6 +14,8 @@ version of the copy you have.
 - macOS: Cowork session content is copied between profiles as APFS clones instead of full copies,
   so the canonical store and every profile share one set of disk blocks (`du` still counts each
   clone at full size). rsync is no longer used.
+- The release workflow runs `tools/test-session-sync.ps1` on Windows PowerShell 5.1 and won't
+  publish if it fails.
 
 ### Fixed
 

@@ -440,8 +440,8 @@ single source of truth, and the tag must match it — the build fails otherwise.
 1. Bump `$ScriptVersion` and add the matching `CHANGELOG.md` entry.
 2. Commit, then tag and push:
    ```powershell
-   git tag -a v1.1.0 -m "claude-switch v1.1.0"
-   git push origin v1.1.0
+   git tag -a v1.2.0 -m "claude-switch v1.2.0"
+   git push origin v1.2.0
    ```
 3. The `Release` workflow builds `dist/claude-switch-<version>.zip`, smoke-tests `-Version`,
    runs `tools/test-session-sync.ps1`, verifies the archive contents, and publishes the GitHub

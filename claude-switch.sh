@@ -8,7 +8,7 @@
 #    claude-switch.sh --list             list profiles / show the active one
 #    claude-switch.sh <name> --no-launch switch only, do not launch
 #    claude-switch.sh --setup            (maintenance) ensure shared infra is linked everywhere
-#    claude-switch.sh --menu             interactive menu: add / pick a profile by number
+#    claude-switch.sh [--menu]           interactive menu: add / pick a profile by number
 #    claude-switch.sh --stop             fully close Claude Desktop + all its children (run this
 #                                        before updating the app, or it may fail with a file lock)
 #
@@ -621,6 +621,45 @@ cmd_switch() {
   (( OPT_NOLAUNCH )) || launch_claude
 }
 
+# A new account creates its session directories only after the first launch. Give that account a
+# second pass once login has completed so existing projects and Code sessions can be imported.
+complete_first_login() {
+  local name=$1 answer has_account_dir=0 dir
+  print -- "[cc-sync] Log in to Claude first. Existing projects and Code sessions are not imported yet."
+  print -n -- "After login, press Enter to import them and restart Claude (Q to skip): "
+  read -r answer || return 0
+  [[ -n $answer && $answer != [Qq] ]] && return 0
+  [[ $(get_active) == "$name" ]] || {
+    print -u2 -- "[cc-sync] Active profile changed. Run './claude-switch.sh $name' again after login."
+    return 0
+  }
+
+  for dir in "$LIVE/claude-code-sessions"/*/*(N/) "$LIVE/local-agent-mode-sessions"/*/*(N/); do
+    has_account_dir=1
+    break
+  done
+  if (( ! has_account_dir )); then
+    print -u2 -- "[cc-sync] No account session directory yet. Open Claude Code once, then run the same profile again."
+    return 0
+  fi
+
+  acquire_lock
+  stop_claude
+  update_cc_map_entry "$name" 2>/dev/null || print -u2 -- "[cc-sync] account detection skipped"
+  if [[ -z ${CC_ACCT[$name]-} || -z ${CC_ORG[$name]-} ]]; then
+    release_lock
+    print -u2 -- "[cc-sync] Could not identify the logged-in account. Retry after Claude Code creates its session directory."
+    return 0
+  fi
+  sync_pull_cc "$name" 2>/dev/null || print -u2 -- "[cc-sync] session pull skipped"
+  sync_pull_lam "$name" 2>/dev/null || print -u2 -- "[cc-sync] project content pull skipped"
+  sync_push_cc "$name" 2>/dev/null || print -u2 -- "[cc-sync] session import skipped"
+  sync_push_lam "$name" 2>/dev/null || print -u2 -- "[cc-sync] project content import skipped"
+  ensure_shared_links "$LIVE"
+  release_lock
+  launch_claude
+}
+
 # =============================================================================
 # Argument parsing + dispatch
 # =============================================================================
@@ -655,6 +694,10 @@ fi
 
 if (( OPT_SETUP )); then cmd_setup; exit 0; fi
 if (( OPT_MENU )); then cmd_menu; exit 0; fi
-if (( OPT_LIST )) || [[ -z $PROFILE_NAME ]]; then cmd_list; exit 0; fi
+if (( OPT_LIST )); then cmd_list; exit 0; fi
+if [[ -z $PROFILE_NAME ]]; then cmd_menu; exit 0; fi
 
 cmd_switch "$PROFILE_NAME"
+if (( ! OPT_NOLAUNCH )) && ! cc_view_dir "$PROFILE_NAME" >/dev/null 2>&1; then
+  complete_first_login "$PROFILE_NAME"
+fi

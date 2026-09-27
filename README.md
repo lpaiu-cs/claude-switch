@@ -243,11 +243,16 @@ As on Windows, the first run automatically labels your current install `main`.
 ./claude-switch.sh --list            # list profiles / show the active one
 ./claude-switch.sh <name> --no-launch # switch only, don't launch
 ./claude-switch.sh --setup           # (maintenance) link shared infra into every profile
-./claude-switch.sh --menu            # interactive menu: pick a profile by number, or add one
+./claude-switch.sh                   # interactive menu: pick a profile by number, or add one
 ./claude-switch.sh --stop            # fully close Claude Desktop + all its children (before updating)
 ```
 
 Profile-name rules and the "unknown name = new empty profile" behavior are identical to Windows.
+
+When switching to a brand-new account, Claude must be opened and logged in once before its
+account session folder exists. The script pauses after launch; finish login and press Enter to
+import existing projects and Code sessions, stop Claude safely, and relaunch it with the imported
+content.
 
 ### Layout (macOS)
 

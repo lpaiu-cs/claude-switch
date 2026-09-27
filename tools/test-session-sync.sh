@@ -28,4 +28,20 @@ print -rn '{"lastActivityAt":1}' > $view/local_Y.json
 _sync_dir $view $canon
 [[ -e $canon/local_Y.json ]] || fail "a new session was not copied"
 
-print "PASS: stale-copy protection, mtime tie-break, new-session copy"
+# Cowork content: hidden/nested files and empty dirs arrive as clones; a newer destination is kept.
+src=$T/lam-src dst=$T/lam-dst
+mkdir -p $src/local_A/.claude/projects/p $src/local_A/outputs $src/local_A/uploads $dst
+print -rn one > $src/local_A/.claude/projects/p/t.jsonl
+nfd=$'가'.txt                      # decomposed Hangul, as macOS apps write it
+print -rn x > $src/local_A/uploads/$nfd
+print -rn '{"lastActivityAt":1}' > $src/local_A.json
+_sync_lam $src $dst
+[[ $(<$dst/local_A/.claude/projects/p/t.jsonl) == one ]] || fail "a hidden nested session file was not copied"
+[[ -d $dst/local_A/outputs ]] || fail "an empty session dir (outputs/) was not recreated"
+[[ $(cd $dst/local_A/uploads && find . -type f) == ./$nfd ]] || fail "a file name's Unicode form changed in the copy"
+[[ -e $dst/local_A.json ]] || fail "the session json was not copied"
+print -rn newer > $dst/local_A/.claude/projects/p/t.jsonl
+_sync_lam $src $dst
+[[ $(<$dst/local_A/.claude/projects/p/t.jsonl) == newer ]] || fail "sync overwrote a newer destination file"
+
+print "PASS: stale-copy protection, mtime tie-break, new-session copy, Cowork content copy"

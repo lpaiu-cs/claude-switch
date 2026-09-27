@@ -11,6 +11,9 @@ version of the copy you have.
 ### Changed
 
 - macOS: `./claude-switch.sh` with no arguments opens the profile menu.
+- macOS: Cowork session content is copied between profiles as APFS clones instead of full copies,
+  so the canonical store and every profile share one set of disk blocks (`du` still counts each
+  clone at full size). rsync is no longer used.
 
 ### Fixed
 

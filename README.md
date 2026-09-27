@@ -288,10 +288,12 @@ Active marker   ~/Library/Application Support/ClaudeActiveProfile.txt
   `local-agent-mode-sessions/<accountUuid>/<orgUuid>/local_<id>/`. Syncing only the index (as on
   Windows) would make a switched-to account list the session but open it empty. So each switch
   also unions the session content through `ClaudeShared/lam-sessions-canonical` (per-file
-  newest-wins via `rsync`), and rewrites the absolute account-scoped paths embedded in the
+  newest-wins), and rewrites the absolute account-scoped paths embedded in the
   session JSONs to the incoming account's UUIDs so the sessions actually open. Caches
-  (`rpm/`, `cowork-*-cache.json`) are skipped — the app regenerates them. Note this store grows
-  with your sessions' outputs/uploads; prune old sessions in the app if it gets large.
+  (`rpm/`, `cowork-*-cache.json`) are skipped — the app regenerates them. The content is copied
+  as APFS clones, so the canonical store and every profile share one set of disk blocks
+  (`du`/Finder still count each clone at full size). Prune old sessions in the app if their
+  outputs/uploads get large.
   On macOS the profile→account mapping is read primarily from the app's own `config.json`
   (`lastKnownAccountUuid` + the org-scoped keys), so a freshly logged-in account with **zero
   sessions of its own** is mapped on its very next switch — the session-scan heuristic is only
@@ -598,10 +600,11 @@ Windows와 마찬가지로 처음 실행하면 현재 설치본이 자동으로 
   `local-agent-mode-sessions/<accountUuid>/<orgUuid>/local_<id>/` 아래에 계정 단위로 보관합니다.
   (Windows처럼) 인덱스만 동기화하면 전환한 계정에서 세션이 목록에는 보여도 열면 비어 있게
   됩니다. 그래서 전환할 때마다 세션 내용도 `ClaudeShared/lam-sessions-canonical`을 거쳐
-  union으로 동기화하고(`rsync` 파일별 최신 우선), 세션 JSON에 박혀 있는 계정 UUID 절대경로를
+  union으로 동기화하고(파일별 최신 우선), 세션 JSON에 박혀 있는 계정 UUID 절대경로를
   들어오는 계정의 UUID로 재작성해 세션이 실제로 열리게 합니다. 캐시(`rpm/`,
-  `cowork-*-cache.json`)는 앱이 재생성하므로 건너뜁니다. 이 저장소는 세션의 outputs/uploads만큼
-  커지니, 많이 쌓이면 앱에서 오래된 세션을 정리하세요.
+  `cowork-*-cache.json`)는 앱이 재생성하므로 건너뜁니다. 내용은 APFS 클론으로 복사하므로
+  canonical 저장소와 모든 프로필이 디스크 블록 한 벌을 공유합니다(`du`/Finder는 클론도 전체
+  크기로 셉니다). 세션의 outputs/uploads가 많이 쌓이면 앱에서 오래된 세션을 정리하세요.
   macOS에서는 프로필→계정 매핑을 앱의 `config.json`(`lastKnownAccountUuid` + org 스코프 키)에서
   우선 읽으므로, **자기 세션이 하나도 없는** 갓 로그인한 계정도 바로 다음 전환에서 매핑됩니다 —
   세션 스캔 휴리스틱은 폴백일 뿐입니다.

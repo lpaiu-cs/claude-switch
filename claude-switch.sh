@@ -333,11 +333,10 @@ sync_push_cc() {
 # Without syncing this, a switched-to account sees the session in its list but opens it empty
 # ("project contents missing"). We union it through a canonical store like the index: session ids
 # are uuids, so entries from different accounts never collide. Directories merge per-file
-# newest-wins via rsync; the per-session local_*.json files use the same newest-wins copy as the
-# index. Caches (rpm/, cowork-*-cache.json) are account-local and skipped - the app regenerates
-# them.
-typeset -g HAVE_RSYNC=0
-command -v rsync >/dev/null 2>&1 && HAVE_RSYNC=1
+# newest-wins, copied as APFS clones (cp -c): canonical and every profile's copy share the same
+# disk blocks instead of each holding a full copy. The per-session local_*.json files use the same
+# newest-wins copy as the index. Caches (rpm/, cowork-*-cache.json) are account-local and skipped -
+# the app regenerates them.
 
 lam_view_dir() {
   local name=$1
@@ -347,16 +346,21 @@ lam_view_dir() {
 }
 
 _sync_lam() {
-  local src=$1 dst=$2 e base
+  local src=$1 dst=$2 e f to
   [[ -d $src ]] || return 0
   mkdir -p -- "$dst"
   for e in "$src"/local_*(N/); do   # session content dirs
-    base=${e:t}
-    if (( HAVE_RSYNC )); then
-      rsync -a -u -- "$e/" "$dst/$base/"
-    else
-      [[ -e "$dst/$base" ]] || cp -Rp -- "$e" "$dst/$base"
-    fi
+    # find, not a zsh glob: zsh hands back NFC names, which would rename NFD files (Korean output
+    # file names, for one) in the copy. find lists a dir before its contents.
+    while IFS= read -r -d '' f; do
+      to=$dst/${f#$src/}
+      if [[ -d $f ]]; then          # empty dirs too: outputs/ is the session's working dir
+        [[ -d $to ]] || mkdir -p -- "$to"
+      elif [[ -f $f ]]; then
+        [[ -e $to && ! $f -nt $to ]] && continue
+        cp -c -p -- "$f" "$to" 2>/dev/null || cp -p -- "$f" "$to"   # plain copy if cloning fails
+      fi
+    done < <(find "$e" -print0)
   done
   _sync_dir "$src" "$dst"           # per-session local_*.json files (newest wins)
   return 0
@@ -718,7 +722,7 @@ if [[ -z $PROFILE_NAME ]]; then cmd_menu; exit 0; fi
 # A switch cut in half (folders moved, sessions not synced in) leaves the new profile on stale
 # session files, which then overwrite real work on the next switch. Closing the Terminal window
 # (SIGHUP) or Ctrl-C must not do that: ignore both from here on. Children inherit the ignore, so
-# an in-flight cp/rsync survives too.
+# an in-flight cp survives too.
 trap '' HUP INT
 cmd_switch "$PROFILE_NAME"
 if (( ! OPT_NOLAUNCH )) && ! cc_view_dir "$PROFILE_NAME" >/dev/null 2>&1; then

@@ -183,7 +183,10 @@ get_active() {
 }
 set_active() { print -rn -- "$1" > "$MARKER"; }
 
-# --- Cross-process lock (mkdir is atomic; released by an EXIT trap) -----------
+# --- Cross-process lock (mkdir is atomic; released by the top-level EXIT trap) --
+# The trap can't be set in here: under `emulate -L` a trap set inside a function is undone when
+# the function returns - and an EXIT trap fires right then, which used to drop the lock the moment
+# it was taken.
 acquire_lock() {
   mkdir -p -- "$SHARED"
   if [[ -d $LOCKDIR ]]; then
@@ -191,13 +194,15 @@ acquire_lock() {
     mtime=$(stat -f %m "$LOCKDIR" 2>/dev/null) || mtime=0
     now=$(date +%s)
     age=$(( now - mtime ))
-    (( age > 300 )) && rm -rf -- "$LOCKDIR"   # stale lock from a crashed run
+    if (( age > 300 )); then
+      print -u2 -- "warning: the previous claude-switch run died mid-way (stale lock). This run re-syncs sessions."
+      rm -rf -- "$LOCKDIR"
+    fi
   fi
   if ! mkdir -- "$LOCKDIR" 2>/dev/null; then
     die "Another claude-switch operation is in progress (lock: $LOCKDIR). If it is stale, remove that folder and retry."
   fi
   LOCK_HELD=1
-  trap 'release_lock' EXIT INT TERM
 }
 release_lock() { (( LOCK_HELD )) && rm -rf -- "$LOCKDIR" 2>/dev/null; LOCK_HELD=0; }
 
@@ -285,19 +290,29 @@ cc_view_dir() {
   print -r -- "$LIVE/claude-code-sessions/$acct/$org"
 }
 
-# newest-wins copy of local_*.json from $1 into $2
+# REPLY = the session's own lastActivityAt (0 if absent). The app rewrites a session file just for
+# focusing it, so mtime means "touched", not "newer": a stale copy that was merely clicked used to
+# win on mtime and overwrite a day of real work (2026-09-27).
+_activity() {
+  local c; c=$(<$1) 2>/dev/null
+  if [[ $c =~ '"lastActivityAt":[[:space:]]*([0-9]+)' ]]; then REPLY=$match[1]; else REPLY=0; fi
+}
+
+# newest-wins copy of local_*.json from $1 into $2: newer lastActivityAt wins, mtime breaks ties
 _sync_dir() {
-  local src=$1 dst=$2 f base st dt
+  local src=$1 dst=$2 f base sa da
   [[ -d $src ]] || return 0
   mkdir -p -- "$dst"
   for f in "$src"/local_*.json(N); do
     base=${f:t}
     if [[ ! -e "$dst/$base" ]]; then
       cp -p -- "$f" "$dst/$base"
-    else
-      st=$(stat -f %m "$f" 2>/dev/null) || st=0
-      dt=$(stat -f %m "$dst/$base" 2>/dev/null) || dt=0
-      (( st > dt )) && cp -p -- "$f" "$dst/$base"
+      continue
+    fi
+    _activity "$f"; sa=$REPLY
+    _activity "$dst/$base"; da=$REPLY
+    if (( sa > da )) || { (( sa == da )) && [[ $f -nt $dst/$base ]]; }; then
+      cp -p -- "$f" "$dst/$base"
     fi
   done
   return 0
@@ -663,6 +678,8 @@ complete_first_login() {
 # =============================================================================
 # Argument parsing + dispatch
 # =============================================================================
+[[ $ZSH_EVAL_CONTEXT == *:file ]] && return 0   # sourced by tools/test-session-sync.sh: functions only
+
 typeset -g OPT_LIST=0 OPT_NOLAUNCH=0 OPT_SETUP=0 OPT_MENU=0 OPT_STOP=0
 typeset -g PROFILE_NAME=''
 for arg in "$@"; do
@@ -682,6 +699,7 @@ done
 
 [[ -d $APP_PATH ]] || die "Claude Desktop not found at $APP_PATH. Install it first."
 mkdir -p -- "$STORE" "$SHARED"
+trap 'release_lock' EXIT   # top level on purpose - see acquire_lock
 
 if (( OPT_STOP )); then cmd_stop; exit 0; fi
 
@@ -697,6 +715,11 @@ if (( OPT_MENU )); then cmd_menu; exit 0; fi
 if (( OPT_LIST )); then cmd_list; exit 0; fi
 if [[ -z $PROFILE_NAME ]]; then cmd_menu; exit 0; fi
 
+# A switch cut in half (folders moved, sessions not synced in) leaves the new profile on stale
+# session files, which then overwrite real work on the next switch. Closing the Terminal window
+# (SIGHUP) or Ctrl-C must not do that: ignore both from here on. Children inherit the ignore, so
+# an in-flight cp/rsync survives too.
+trap '' HUP INT
 cmd_switch "$PROFILE_NAME"
 if (( ! OPT_NOLAUNCH )) && ! cc_view_dir "$PROFILE_NAME" >/dev/null 2>&1; then
   complete_first_login "$PROFILE_NAME"

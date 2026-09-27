@@ -44,6 +44,16 @@ try {
   Sync-PullCC 'new'
   Assert ((Bytes $source) -eq (Bytes $dest)) 'Pull lost newer changes'
 
+  # A stale copy the app merely re-saved (newer LastWriteTime, older lastActivityAt) must not
+  # overwrite real progress in either direction (2026-09-27).
+  Set-Content $source '{"sessionId":"local_existing","cliSessionId":"new","lastActivityAt":200}'
+  (Get-Item $source).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(-10)
+  Set-Content $dest '{"sessionId":"local_existing","cliSessionId":"old","lastActivityAt":100}'
+  Sync-PullCC 'new'
+  Assert ((Get-Content $source -Raw) -match '"new"') 'Pull let a stale, re-saved copy overwrite newer work'
+  Sync-PushCC 'new'
+  Assert ((Get-Content $dest -Raw) -match '"new"') 'Push kept a stale copy over newer work'
+
   # Stub only the interactive boundary; no app is stopped or launched in tests.
   function Read-Host { return '' }
   function powershell { $script:relaunched = $true }
@@ -58,7 +68,7 @@ try {
   $P.Live = Join-Path $root 'not-logged-in'
   Complete-CCFirstLogin 'new'
   Assert (-not $script:relaunched) 'Login completion restarted before login'
-  Write-Output 'PASS: first-login import, byte preservation, newest-wins, and login completion guards'
+  Write-Output 'PASS: first-login import, byte preservation, newest-wins, stale-copy protection, and login completion guards'
 } finally {
   $resolved = [IO.Path]::GetFullPath($root)
   $temp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'

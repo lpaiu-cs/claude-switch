@@ -8,10 +8,26 @@ version of the copy you have.
 
 ## [Unreleased]
 
+### Changed
+
+- macOS: `./claude-switch.sh` with no arguments opens the profile menu.
+
 ### Fixed
 
-- Finish the initial Code-session import after a new profile logs in: the account/org
-  directory does not exist before that first launch. The launcher now asks the user
+- **A stale session copy no longer overwrites real work.** Session files were merged
+  newest-mtime-wins, but Claude Desktop re-saves a session file just for focusing it. After a
+  switch was cut short, a stale copy that was merely clicked won on mtime and wiped the pointer
+  to a day of conversation from every profile (the transcript itself survived). Copies are now
+  compared by their own `lastActivityAt`; mtime only breaks ties.
+- **A switch can't be cut in half any more.** On macOS, closing the Terminal window or pressing
+  Ctrl-C mid-switch left the folders moved but the sessions not synced in. The switch now
+  ignores SIGHUP/SIGINT. Windows ignores Ctrl-C the same way.
+- macOS: the cross-process lock was released the moment it was taken. Under `emulate -L`, an
+  EXIT trap set inside a function fires when that function returns, so no switch was ever
+  guarded. The trap now lives at top level.
+- A lock left behind by a run that died is reported, instead of silently removed after 5 minutes.
+- Finish the initial Code-session import after a new profile logs in (Windows and macOS): the
+  account/org directory does not exist before that first launch. The launcher now asks the user
   to finish login and press Enter to restart and import, without holding the switch lock.
 - Import canonical sessions into the outgoing profile too, so a newly logged-in
   profile receives the existing tasks before it is stashed.

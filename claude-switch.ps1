@@ -200,7 +200,8 @@ function Acquire-Lock {
   $lock = Join-Path $P.Roaming 'claude-switch.lock'
   $existing = Get-Item $lock -Force -ErrorAction SilentlyContinue
   if ($existing -and ((Get-Date) - $existing.LastWriteTime).TotalMinutes -gt 5) {
-    Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue  # stale lock from a crashed run
+    Write-Warning "The previous claude-switch run died mid-way (stale lock). This run re-syncs sessions."
+    Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue
   }
   try { New-Item -ItemType File -Path $lock -ErrorAction Stop | Out-Null }
   catch { throw "Another claude-switch operation is in progress (lock: $lock). If it is stale, delete that file and retry." }
@@ -260,6 +261,22 @@ function Get-CCViewDir([string]$name) {
   if (-not $m.accountUuid -or -not $m.orgUuid) { return $null }
   return (Join-Path $P.Live ("claude-code-sessions\{0}\{1}" -f $m.accountUuid, $m.orgUuid))
 }
+# The session's own lastActivityAt (0 if absent). The app rewrites a session file just for focusing
+# it, so LastWriteTime means "touched", not "newer": a stale copy that was merely clicked used to
+# win on mtime and overwrite a day of real work (2026-09-27).
+function Get-SessionActivity([string]$path) {
+  $m = [regex]::Match([IO.File]::ReadAllText($path), '"lastActivityAt":\s*(\d+)')
+  if ($m.Success) { return [int64]$m.Groups[1].Value }
+  return [int64]0
+}
+# Should $src replace $dst? Newer lastActivityAt wins; LastWriteTime only breaks ties.
+function Test-SessionNewer([IO.FileInfo]$src, [string]$dst) {
+  if (-not (Test-Path -LiteralPath $dst)) { return $true }
+  $sa = Get-SessionActivity $src.FullName
+  $da = Get-SessionActivity $dst
+  if ($sa -ne $da) { return $sa -gt $da }
+  return $src.LastWriteTimeUtc -gt (Get-Item -LiteralPath $dst).LastWriteTimeUtc
+}
 function Sync-PullCC([string]$name) {
   # active account's view (at Live) -> canonical (newest wins)
   $view = Get-CCViewDir $name
@@ -267,7 +284,7 @@ function Sync-PullCC([string]$name) {
   New-Item -ItemType Directory -Force -Path $P.CCCanon | Out-Null
   Get-ChildItem $view -Filter 'local_*.json' -File -ErrorAction SilentlyContinue | ForEach-Object {
     $dst = Join-Path $P.CCCanon $_.Name
-    if (-not (Test-Path $dst) -or $_.LastWriteTimeUtc -gt (Get-Item $dst).LastWriteTimeUtc) {
+    if (Test-SessionNewer $_ $dst) {
       Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
     }
   }
@@ -279,7 +296,7 @@ function Sync-PushCC([string]$name) {
   New-Item -ItemType Directory -Force -Path $view | Out-Null
   Get-ChildItem $P.CCCanon -Filter 'local_*.json' -File -ErrorAction SilentlyContinue | ForEach-Object {
     $dst = Join-Path $view $_.Name
-    if (-not (Test-Path $dst) -or $_.LastWriteTimeUtc -gt (Get-Item $dst).LastWriteTimeUtc) {
+    if (Test-SessionNewer $_ $dst) {
       Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
     }
   }
@@ -465,6 +482,10 @@ if ($List -or -not $ProfileName) {
 # --- Switch (move-based) ---
 Assert-ValidProfileName $ProfileName
 $lock = Acquire-Lock
+# A switch cut in half (folders moved, sessions not synced in) leaves the new profile on stale
+# session files. Don't let Ctrl-C do that. Closing the console window still can; the
+# lastActivityAt comparison in the sync keeps that from overwriting real work.
+try { [Console]::TreatControlCAsInput = $true } catch { }
 try {
   Stop-ClaudeDesktop
   $active = Get-Active
@@ -513,6 +534,7 @@ try {
     Write-Host "Launching Claude..." -ForegroundColor Green
   }
 } finally {
+  try { [Console]::TreatControlCAsInput = $false } catch { }
   Release-Lock $lock
 }
 

@@ -55,6 +55,12 @@ jobs:
           Write-Host "reported: $actual"
           if ($actual -ne $expected) { throw "-Version reported '$actual', expected '$expected'." }
 
+      # The session-sync rules decide whether a switch can overwrite real work, and they are
+      # usually edited on machines without Windows PowerShell - so check them on the real runtime.
+      - name: Session sync test
+        shell: powershell
+        run: .\tools\test-session-sync.ps1
+
       - name: Verify archive contents
         shell: powershell
         run: |

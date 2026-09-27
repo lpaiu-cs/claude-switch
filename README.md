@@ -444,8 +444,8 @@ single source of truth, and the tag must match it — the build fails otherwise.
    git push origin v1.1.0
    ```
 3. The `Release` workflow builds `dist/claude-switch-<version>.zip`, smoke-tests `-Version`,
-   verifies the archive contents, and publishes the GitHub Release with the zip and its
-   `.sha256`.
+   runs `tools/test-session-sync.ps1`, verifies the archive contents, and publishes the GitHub
+   Release with the zip and its `.sha256`.
 
 Build locally without tagging:
 
